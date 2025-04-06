@@ -1,0 +1,14 @@
+# Refer to https://github.com/probe-rs/cargo-embed/blob/master/src/config/default.toml
+# for the comprehensive list of options
+
+[default.general]
+chip = "STM32F103C8"
+
+[default.rtt]
+enabled = true
+
+[default.gdb]
+# Whether or not a GDB server should be opened after flashing.
+# This is exclusive and cannot be used with RTT at the moment.
+enabled = false
+

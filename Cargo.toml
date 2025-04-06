@@ -1,0 +1,46 @@
+[package]
+name = "TaikoHID"
+version = "0.1.0"
+edition = "2024"
+test = false
+
+[dependencies]
+cortex-m-rtic = "1.1.4"
+systick-monotonic = "1.0.0"
+
+panic-rtt-target = { version = "0.1.2", features = ["cortex-m"] }
+rtt-target = { version = "0.3.1", features = ["cortex-m"] }
+
+log = "0.4.27"
+panic-custom = "0.1.1"
+embedded-hal = "1.0.0"
+stm32f1 = { version = "0.15.1", features = ["stm32f103"] }
+
+[[bin]]
+name = "TaikoHIDFirmware"
+path = "./src/main.rs"
+test = false
+bench = false
+
+[profile.release]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+panic = 'abort'
+incremental = false
+rpath = false
+lto = true
+codegen-units = 1
+# symbols are nice and they don't increase the size on Flash
+debug = true 
+
+[profile.dev]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+panic = 'abort'
+incremental = false
+rpath = false
+lto = true
+codegen-units = 1
+debug = true
