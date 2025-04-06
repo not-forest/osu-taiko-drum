@@ -3,10 +3,17 @@
 #![no_main]
 #![no_std]
 
-use panic_rtt_target as _;
+panic_custom::define_panic!(|info| {
+    log::error!("System panic occured: {}", info);
+});
 
-#[rtic::app(device = stm32f1::stm32f103, peripherals = true)]
+#[rtic::app(
+    device = stm32f1::stm32f103,
+    dispatchers = [ADC1_2],
+    peripherals = true,
+)]
 mod app {
+
     #[shared]
     struct Shared {
 
@@ -24,25 +31,18 @@ mod app {
     /// During the initialization phase, application does the following:
     /// - Initializes the logger for debug and release builds;
     #[init]
-    fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
+    fn Init(cx: Init::Context) -> (Shared, Local) {
         let (core, device) = (cx.core, cx.device);
         
         if let Err(log_set_err) = TaikoHID::log::init() {
             unimplemented!()
         } 
-        log::info!("Init");
+
+        log::info!("Booting taiko firmware version: [{}]", TaikoHID::TAIKO_HID_FIRMWARE_VERSION);
 
         (
             Shared {}, 
-            Local {}, 
-            init::Monotonics()
+            Local {},
         )    
-    }
-
-    #[idle]
-    fn periodic_task(cx: periodic_task::Context) -> ! {
-        log::info!("Running periodic task!");
-
-        loop {}
     }
 }
