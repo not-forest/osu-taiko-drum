@@ -17,12 +17,12 @@ impl TaikoLogger {
     fn init() -> Result<(), SetLoggerError> {
         log::set_logger(&APP_LOGGER)
             .map(|_l| {
-                rtt_target::rtt_init_print!();
-                
                 #[cfg(debug_assertions)] {
+                    rtt_target::debug_rtt_init_print!();
                     log::set_max_level(log::LevelFilter::Trace);
                 } 
                 #[cfg(not(debug_assertions))] {
+                    rtt_target::rtt_init_print!();
                     log::set_max_level(log::LevelFilter::Info);
                 } 
             })
