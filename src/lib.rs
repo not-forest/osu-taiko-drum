@@ -37,7 +37,9 @@ mod app {
     /// During the initialization phase, application does the following:
     /// - Initializes the logger for debug and release builds;
     /// - Configures monotonic timers;
-    /// - Prepares ADC1 & ADC2 for reading input from four piezoelectric sensors;
+    /// - Prepares ADC1 & ADC2 for reading input from four piezoelectric sensors in injected
+    /// simultaneous mode;
+    /// - Prepares communication channel between [`app::SensorHandling`] and [`app::UsbHidSender`] tasks.
     #[init]
     fn Init(ctx: Init::Context) -> (Shared, Local) {
         let (core, mut dev) = (ctx.core, ctx.device);
@@ -56,11 +58,6 @@ mod app {
 
         /* Tasks */ 
         UsbHidSender::spawn(r).expect("First HID task initialization.");
-
-        unsafe {    /* Interrupts unmasking. */
-            use super::pac::Interrupt;
-            cortex_m::peripheral::NVIC::unmask(Interrupt::ADC1_2);
-        }
 
         (
             Shared {}, 

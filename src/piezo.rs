@@ -1,17 +1,20 @@
 //! Defines a piezoelectric sensor driver to detect precise hits for Taiko Drum.
 
+use crate::app;
+
 use super::pac::{RCC, ADC1, ADC2, GPIOA, TIM4};
 use rtic_sync::channel::TrySendError;
 
 /* Constant sampler configuration values. TODO! swap to configurable values saved in flash */
 const INTERRUPT_SAMPLER_TIMER_CC: u16 = 1000;
-const WATCHDOG_THRESHOLD_HALT_MODE_VALUE: u16 = 2000;
+/* 12-bit ADC will obtain this value when the voltage will spike to >=0,3V */
+const WATCHDOG_THRESHOLD_HALT_MODE_VALUE: u16 = 500;
 
 /* Sensor position to channel mapping, */
-const LEFT_EDGE_PIEZO: u8 = 1;
-const LEFT_CENTER_PIEZO: u8 = 2;
-const RIGHT_CENTER_PIEZO: u8 = 3;
-const RIGHT_EDGE_PIEZO: u8 = 4;
+const LEFT_EDGE_PIEZO: u8 = 3;
+const LEFT_CENTER_PIEZO: u8 = 4;
+const RIGHT_CENTER_PIEZO: u8 = 5;
+const RIGHT_EDGE_PIEZO: u8 = 6;
 
 /// Communication queue capacity.
 pub(crate) const PIEZO_SENSOR_QUEUE_CAPACITY: usize = 32;
@@ -118,13 +121,29 @@ impl PiezoSensorHandler {
              .jexttrig().set_bit()
              .adon().set_bit()
         );
-        cortex_m::asm::delay(1000);
+
+        /* 
+         * ADC calibration procedure.
+         *
+         * This will also halt the CPU in the loop until ADC will be properly started after waiting
+         * for t_STAB, which is not well defined.
+         * */
+        adcs.0.cr2.modify(|_, w| w.cal().set_bit());
+        while adcs.0.cr2.read().cal().bit_is_set() {}
+        adcs.1.cr2.modify(|_, w| w.cal().set_bit());
+        while adcs.1.cr2.read().cal().bit_is_set() {}
 
         // ADC1, ADC2 dual mode synchronized configuration with iterrupts enabled from ADC1.
         adcs.0.cr1.modify(|_, w|
             w
-             .dualmod().injected()  /* Injected conversions will occur during a timer interrupt.        */
-             .jeocie().set_bit()    /* Performing interrupt on ADC1 for injected channels only.    */
+             .jeocie().set_bit()    /* Performing interrupt on ADC1 for injected channels only.         */
+             .awdsgl().clear_bit()  /* Watchdog listens on all channels. */
+             .scan().set_bit()      /* Scan mode will store multiple channels in JDR1, JDR2 */
+        );
+        adcs.1.cr1.modify(|_, w|
+            w
+             .awdsgl().clear_bit()
+             .scan().set_bit()
         );
         
         /* 
@@ -137,8 +156,8 @@ impl PiezoSensorHandler {
          * */
         adcs.0.jsqr.modify(|_, w|
             w.jl().variant(1)
-                .jsq3().variant(LEFT_EDGE_PIEZO)
-                .jsq4().variant(LEFT_CENTER_PIEZO)
+             .jsq3().variant(LEFT_EDGE_PIEZO)
+             .jsq4().variant(LEFT_CENTER_PIEZO)
         );
 
         adcs.1.jsqr.modify(|_, w|
@@ -148,7 +167,15 @@ impl PiezoSensorHandler {
         );
         
         // Configure watchdog thresholds
-        adcs.0.htr.write(|w| w.ht().bits(WATCHDOG_THRESHOLD_HALT_MODE_VALUE));
+        adcs.0.htr.modify(|_, w| w.ht().bits(WATCHDOG_THRESHOLD_HALT_MODE_VALUE));
+
+        adcs.0.cr1.modify(|_, w|
+            w 
+             .dualmod().injected()  /* Setting this bit at the end of ADC configuration provides better synchronization between two ADCs. */
+        );
+        // Enabling ADCs
+        adcs.0.cr2.modify(|_, w| w.adon().set_bit());
+        adcs.1.cr2.modify(|_, w| w.adon().set_bit());
 
         tim.psc.write(|w| w.psc().bits(0));                    /* Prescaler value for timer.            */
         tim.ccmr1_output().modify(|_, w| w.oc1m().frozen());   /* Don't generate PWM signal on channel  */
@@ -159,6 +186,7 @@ impl PiezoSensorHandler {
 
         let mut s = Self { adcs, sender, tim, mode: PiezoSensorSampleMode::HALT };
         s.__set_pssm_halt();
+        s.set_interrupt_mode(PiezoSensorSampleMode::TIMER(INTERRUPT_SAMPLER_TIMER_CC));
         s
     }
 
@@ -182,25 +210,36 @@ impl PiezoSensorHandler {
             return
         }
 
-        if let Err(err) = self.sender.try_send(self.read()) {
+        log::info!("{:?}", self.read());
+        /* if let Err(err) = self.sender.try_send(self.read()) {
             match err {
+                /* 
+                 * This shall not happen at all in this application, since that means loosing
+                 * connection with the host machine. 
+                 * */
                 TrySendError::NoReceiver(_) => {
                     log::warn!("Tried to send without a receiver. Loosing data.");
                 },
+                /*  
+                 * This means that [`super::app::UsbHidSender`] task is starving. Will cause huge
+                 * input lag spike
+                 * */
                 TrySendError::Full(_) => {
                     log::warn!("FIFO queue is full. Loosing data.");
+
+                    cortex_m::peripheral::NVIC::mask(super::pac::Interrupt::ADC1_2); 
                 }
             }
-        }
+        } */
     }
 
     /// Reads ADC conversion result from all sensors.
     fn read(&self) -> PiezoSample {
         PiezoSample {
-            le: self.adcs.0.jdr3().read().jdata().bits(),
-            re: self.adcs.1.jdr3().read().jdata().bits(),
-            lc: self.adcs.0.jdr4().read().jdata().bits(),
-            rc: self.adcs.1.jdr4().read().jdata().bits(),
+            le: self.adcs.0.jdr1().read().jdata().bits(),
+            lc: self.adcs.0.jdr2().read().jdata().bits(),
+            re: self.adcs.1.jdr1().read().jdata().bits(),
+            rc: self.adcs.1.jdr2().read().jdata().bits(),
         }
     }
 
@@ -242,7 +281,7 @@ impl PiezoSensorHandler {
     fn __sensor_gpios_conf(gpios: &mut GPIOA) {
         // Gpio pins configuration.
         gpios.crl.modify(|_, w|         /* Configuring required pins as ADC analog input            */
-            w                       /* `push_pull()` method is used to set analog input mode    */
+            w                           /* `push_pull()` method is equal to set analog input mode   */
              .mode3().input() 
              .cnf3().push_pull()
              .mode4().input()
@@ -254,7 +293,7 @@ impl PiezoSensorHandler {
         );
 
         gpios.lckr.modify(|_, w|       /* Locking gpio configuration for used pins. This allows to      */ 
-            w                      /* remove the ownership of [`GPIOA`] for [`PiezoSensorHandler`]  */
+            w                          /* remove the ownership of [`GPIOA`] for [`PiezoSensorHandler`]  */
              .lck3().set_bit()
              .lck4().set_bit()
              .lck5().set_bit()
