@@ -138,7 +138,7 @@ impl PiezoSensorHandler {
             w
              .jeocie().set_bit()    /* Performing interrupt on ADC1 for injected channels only.         */
              .awdsgl().clear_bit()  /* Watchdog listens on all channels. */
-             .scan().set_bit()      /* Scan mode will store multiple channels in JDR1, JDR2 */
+            .scan().set_bit()      /* Scan mode will store multiple channels in JDR1, JDR2 */
         );
         adcs.1.cr1.modify(|_, w|
             w
@@ -210,8 +210,7 @@ impl PiezoSensorHandler {
             return
         }
 
-        log::info!("{:?}", self.read());
-        /* if let Err(err) = self.sender.try_send(self.read()) {
+        if let Err(err) = self.sender.try_send(self.read()) {
             match err {
                 /* 
                  * This shall not happen at all in this application, since that means loosing
@@ -221,16 +220,15 @@ impl PiezoSensorHandler {
                     log::warn!("Tried to send without a receiver. Loosing data.");
                 },
                 /*  
-                 * This means that [`super::app::UsbHidSender`] task is starving. Will cause huge
+                 * This means that [`super::app::UsbHidSender`] task is starving. Might cause huge
                  * input lag spike
                  * */
                 TrySendError::Full(_) => {
                     log::warn!("FIFO queue is full. Loosing data.");
-
-                    cortex_m::peripheral::NVIC::mask(super::pac::Interrupt::ADC1_2); 
+                    crate::int_disable!(ADC1_2);    // Stopping the transmition for some time.
                 }
             }
-        } */
+        }
     }
 
     /// Reads ADC conversion result from all sensors.
