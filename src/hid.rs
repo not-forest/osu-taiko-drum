@@ -1,15 +1,23 @@
 //! Module that defines HID part of the firmware as well as defining all required trait implementations.
 
 use core::marker::PhantomData;
-use usb_device::{bus::UsbBusAllocator, device::{UsbDevice, UsbDeviceBuilder, UsbVidPid}};
+use usb_device::{bus::UsbBusAllocator, device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid}, test_class::{MANUFACTURER, PRODUCT, SERIAL_NUMBER}};
 use usbd_hid::{descriptor::{generator_prelude::*, *}, hid_class::HIDClass};
+use lhash::md5;
 use super::pac::{RCC, USB};
 
 /* Constant USB definitions. See: https://github.com/obdev/v-usb/blob/master/usbdrv/USB-IDs-for-free.txt */
 const USB_VID: u16 = 0x16c0;
 const USB_PID: u16 = 0x27db;
-const MANUFACTURER: &'static str = "Serhii Shkliaiev [not-forest]";
-const PRODUCT: &'static str = "Taiko Drum Controller";
+const USB_MANUFACTURER: &'static str = "Serhii Shkliaiev [not-forest]";
+const USB_PRODUCT: &'static str = "Taiko Drum Controller";
+const USB_SERIAL_NUMBER: &'static str = 
+    unsafe { 
+        core::str::from_utf8_unchecked(
+            // USB serial number is generates on each build in form of md5 hash.
+            md5(crate::version::TAIKO_HID_FIRMWARE_VERSION.as_bytes()).as_slice()
+        )
+    }; 
 const USB_HID_CLASS_POLLING_FREQ: usize = 100;
 
 /// Usb VID-PID Pair
@@ -33,8 +41,15 @@ impl<'a> UsbTaikoDrum<'a> {
     pub(crate) fn new(alloc: &'a UsbBusAllocator<UsbBus>) -> Self {
         let hid = HIDClass::new(&alloc, DrumHitStrokeHidReport::desc(), ((1 / USB_HID_CLASS_POLLING_FREQ) * 1000) as u8);
         let dev = UsbDeviceBuilder::new(&alloc, TAIKO_DRUM_VIDPID)
-            .device_class(0x07)
+            .strings(&[
+                StringDescriptors::default()
+                    .manufacturer(USB_MANUFACTURER)
+                    .product(USB_PRODUCT)
+                    .serial_number(USB_SERIAL_NUMBER)
+            ]).expect("Shall not panic as long as data type is correct.")
+            .supports_remote_wakeup(false)
             .device_release(crate::version::TAIKO_HID_FIRMWARE_VERSION_BCD)
+            .device_class(0x07)
             .build();
 
         Self { dev, hid, _phantom: PhantomData }
