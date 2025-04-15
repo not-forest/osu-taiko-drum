@@ -18,9 +18,7 @@ mod hid;
 )]
 mod app {
     use super::piezo::{PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY, PiezoSensorHandler, Receiver};
-    use super::hid::{UsbTaikoDrum, UsbBus};
-
-    use usb_device::bus::UsbBusAllocator; 
+    use super::hid::UsbTaikoDrum;
 
     use rtic_monotonics::systick::prelude::*;
     use rtic_sync::make_channel;
@@ -29,12 +27,13 @@ mod app {
     systick_monotonic!(Systick);
 
     #[shared]
-    struct Shared {}
+    struct Shared {
+        usb_dev: UsbTaikoDrum<'static>,
+    }
     
     #[local]
     struct Local {
         piezo_handler: PiezoSensorHandler,
-        usb_bus_alloc: UsbBusAllocator<UsbBus>,
     }
 
     /// Initialization function for drum functionality.
@@ -49,7 +48,7 @@ mod app {
     /// - Prepares communication channel between [`app::SensorHandling`] and [`app::UsbHidSender`] tasks.
     #[init]
     fn Init(ctx: Init::Context) -> (Shared, Local) {
-        let (core, mut dev) = (ctx.core, ctx.device);
+        let (mut core, mut dev) = (ctx.core, ctx.device);
         let (s, r) = make_channel!(PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY);
 
         /* Logging initialization. */
@@ -66,13 +65,39 @@ mod app {
         /* Tasks */ 
         UsbHidSender::spawn(r).expect("First HID task initialization.");
 
+        /* Setting SYSCLK source to PLL (72 MHz on this line.) */
+        let (rcc, flash) = (&mut dev.RCC, &mut dev.FLASH);
+
+        // Enabling internal high speed clock
+        rcc.cr.modify(|_, w| w.hseon().set_bit());
+        while rcc.cr.read().hserdy().bit_is_clear() {}
+
+        rcc.cfgr.modify(|_, w|
+            w   /* Multiplying HSE to reach 72 MHz, so that USB will gain it's 48 MHz */
+             .pllsrc().set_bit()
+             .pllxtpre().clear_bit()
+             .pllmul().mul9()
+             .usbpre().clear_bit()
+        );
+
+        // Enabling PLL.
+        rcc.cr.modify(|_, w| w.pllon().set_bit());
+        while rcc.cr.read().pllrdy().bit_is_clear() {}
+
+        flash.acr.modify(|_, w| w.latency().ws2());
+
+        // Sys clock switch.
+        rcc.cfgr.modify(|_, w| w.sw().pll());
+        while !rcc.cfgr.read().sws().is_pll() {}
+
         (
-            Shared {}, 
+            Shared { 
+                usb_dev: UsbTaikoDrum::new(dev.USB, &mut dev.GPIOA, &mut dev.RCC), 
+            }, 
             Local {
                 piezo_handler: PiezoSensorHandler::new(
                     (dev.ADC1, dev.ADC2), &mut dev.GPIOA, &mut dev.RCC, dev.TIM4, s.clone()
                 ),
-                usb_bus_alloc: UsbTaikoDrum::bus(dev.USB),
             },
         )    
     }
@@ -80,18 +105,17 @@ mod app {
     /// Handles the USB HID connection with the host machine.
     ///
     ///
-    #[task(priority = 2, local = [usb_bus_alloc])]
-    async fn UsbHidSender(ctx: UsbHidSender::Context, mut r: Receiver) {
-        let mut usb_dev = UsbTaikoDrum::new(ctx.local.usb_bus_alloc);
+    #[task(priority = 2, shared = [usb_dev])]
+    async fn UsbHidSender(mut ctx: UsbHidSender::Context, mut r: Receiver) {
         log::info!("UsbHidSender task spawned. Awaiting on upcoming data.");
 
         /* Handling samples obtained from the piezoelectric sensor */
         while let Ok(sample) = r.recv().await {
 /*             log::info!("Obtained sample value: {:#?}", sample); */
 
-            usb_dev.poll(|_| {
-                log::info!("Debug POLL");
-            });
+            /* ctx.shared.usb_dev.lock(|dev| {
+                dev.hid.push_input(&super::hid::DrumHitStrokeHidReport::default()).unwrap()
+            }); */
 
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
         }
@@ -105,10 +129,38 @@ mod app {
     ///
     /// The underlying sensor handling structure is queuing next injected sample from the ADC pin
     /// to the [`super::app::UsbHidSender`] task.
-    #[task(binds = ADC1_2, priority = 1, local = [piezo_handler])]
+    #[task(binds = ADC1_2, priority = 3, local = [piezo_handler])]
     fn SensorHandling(ctx: SensorHandling::Context) {
         log::debug!("Updating sensors data.");
         ctx.local.piezo_handler.send();
+    }
+
+    /// USB TX Polling.
+    #[task(binds = USB_HP_CAN_TX, priority = 1, shared = [usb_dev])]
+    fn UsbPollTx(mut ctx: UsbPollTx::Context) {
+        log::info!("USB_EVENT_Tx");
+
+        ctx.shared.usb_dev.lock(|dev| {
+            if !dev.poll(|_| {
+                panic!("WTF")
+            }) {
+                log::error!("Unable to poll USB.... USB_STATE: {:?}", dev.dev.state());
+            }
+        });
+    }
+
+    /// USB RX Polling.
+    #[task(binds = USB_LP_CAN_RX0, priority = 1, shared = [usb_dev])]
+    fn UsbPollRx(mut ctx: UsbPollRx::Context) {
+        log::info!("USB_EVENT_Rx");
+
+        ctx.shared.usb_dev.lock(|dev| {
+            if !dev.poll(|_| {
+                panic!("WTF")
+            }) {
+                log::error!("Unable to poll USB.... USB_STATE: {:?}", dev.dev.state());
+            }
+        });
     }
 
     // Panic handler.
@@ -119,8 +171,8 @@ mod app {
         log::error!("System panic occured: {}", info);
 
         // Halting on debug builds.
-        #[cfg(not(debug_assertions))]
-        cortex_m::peripheral::SCB::sys_reset(); 
+        /* #[cfg(not(debug_assertions))]
+        cortex_m::peripheral::SCB::sys_reset();  */
     });
 
     const ARM_SYSTICK_HZ: u32 = 12_000_000;

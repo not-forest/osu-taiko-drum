@@ -1,10 +1,14 @@
 //! Module that defines HID part of the firmware as well as defining all required trait implementations.
+#![allow(static_mut_refs)]
 
-use core::marker::PhantomData;
-use usb_device::{bus::UsbBusAllocator, device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid}, test_class::{MANUFACTURER, PRODUCT, SERIAL_NUMBER}};
+use usb_device::{bus::UsbBusAllocator, device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid}, test_class::{MANUFACTURER, PRODUCT, SERIAL_NUMBER}, LangID};
 use usbd_hid::{descriptor::{generator_prelude::*, *}, hid_class::HIDClass};
 use lhash::md5;
-use super::pac::{RCC, USB};
+
+use core::marker::PhantomData;
+use super::pac::{RCC, USB, GPIOA};
+
+static mut USB_ALLOCATOR: Option<UsbBusAllocator<UsbBus>> = None;
 
 /* Constant USB definitions. See: https://github.com/obdev/v-usb/blob/master/usbdrv/USB-IDs-for-free.txt */
 const USB_VID: u16 = 0x16c0;
@@ -18,7 +22,7 @@ const USB_SERIAL_NUMBER: &'static str =
             md5(crate::version::TAIKO_HID_FIRMWARE_VERSION.as_bytes()).as_slice()
         )
     }; 
-const USB_HID_CLASS_POLLING_FREQ: usize = 100;
+const USB_HID_CLASS_POLLING_MS: u8 = 60;
 
 /// Usb VID-PID Pair
 const TAIKO_DRUM_VIDPID: UsbVidPid  = UsbVidPid(USB_VID, USB_PID);
@@ -30,45 +34,66 @@ pub(crate) type UsbBus = stm32_usbd::UsbBus<UsbControllerSTM32F103>;
 /// # Note
 ///
 /// This wrapper is specific to STM32F103xx family of microcontrollers.
-pub(crate) struct UsbTaikoDrum<'a> {
-    dev: UsbDevice<'a, UsbBus>,
-    hid: HIDClass<'a, UsbBus>,
+pub struct UsbTaikoDrum<'a> {
+    pub(crate) dev: UsbDevice<'a, UsbBus>,
+    pub(crate) hid: HIDClass<'a, UsbBus>,
     _phantom: PhantomData<USB>,
 }
 
 impl<'a> UsbTaikoDrum<'a> {
     /// Initializes a new instance of [`UsbTaikoDrum`].
-    pub(crate) fn new(alloc: &'a UsbBusAllocator<UsbBus>) -> Self {
-        let hid = HIDClass::new(&alloc, DrumHitStrokeHidReport::desc(), ((1 / USB_HID_CLASS_POLLING_FREQ) * 1000) as u8);
+    pub(crate) fn new(usb: USB, gpioa: &mut GPIOA, rcc: &mut RCC) -> Self {
+        drop(usb); // UsbBus trait is handling the peripheral itself.
+        
+        /* Configuring USB lines. */
+        rcc.apb2enr.modify(|_, w| w.iopaen().set_bit());
+
+        /* Setting USB reset condition on D+ line. */
+        gpioa.crh.write(|w| 
+            w      /* Pulling the line LOW, which simulates disconnection */
+             .mode12().output()
+             .cnf12().push_pull()
+        );
+        gpioa.odr.write(|w| w.odr12().clear_bit());
+        cortex_m::asm::delay(72_000);
+
+        gpioa.crh.write(|w| 
+            w      /* Sets to floating input. */
+             .mode11().input()
+             .mode12().input()
+             .cnf11().open_drain()
+             .cnf12().open_drain()
+        );
+
+        // This is safe as long as this function is only called once.
+        let alloc = unsafe {
+            USB_ALLOCATOR.replace(UsbBus::new(UsbControllerSTM32F103));
+            USB_ALLOCATOR.as_ref().unwrap()
+        };
+
+        log::info!("Preparing HID descriptor with polling speed of {} ms.", USB_HID_CLASS_POLLING_MS);
+        let hid = HIDClass::new(&alloc, DrumHitStrokeHidReport::desc(), USB_HID_CLASS_POLLING_MS);
         let dev = UsbDeviceBuilder::new(&alloc, TAIKO_DRUM_VIDPID)
             .strings(&[
-                StringDescriptors::default()
+                StringDescriptors::new(LangID::EN)
                     .manufacturer(USB_MANUFACTURER)
                     .product(USB_PRODUCT)
                     .serial_number(USB_SERIAL_NUMBER)
             ]).expect("Shall not panic as long as data type is correct.")
             .supports_remote_wakeup(false)
             .device_release(crate::version::TAIKO_HID_FIRMWARE_VERSION_BCD)
-            .device_class(0x07)
+            .device_class(0x03)
             .build();
 
         Self { dev, hid, _phantom: PhantomData }
     }
 
     /// Allows to perform a HID communication over USB.
-    pub(crate) fn poll<F>(&mut self, f: F) where
+    pub(crate) fn poll<F>(&mut self, f: F) -> bool
+    where
         F: FnOnce(&mut HIDClass<UsbBus>)
     {
-        self.dev.poll(&mut [&mut self.hid]).then(|| f(&mut self.hid));
-    } 
-
-    /// Initializes a new bus allocator from the underlying usb controller.
-    ///
-    /// The obtained bus must be a static variable for the whole application, since all USB-related
-    /// functionality requires it.
-    pub(crate) fn bus(usb: USB) -> UsbBusAllocator<UsbBus> {
-        drop(usb);
-        UsbBus::new(UsbControllerSTM32F103)
+        self.dev.poll(&mut [&mut self.hid]).then(|| f(&mut self.hid)).is_some()
     }
 }
 
