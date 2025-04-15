@@ -3,9 +3,11 @@
 
 [default.general]
 chip = "STM32F103C8"
+log_level = "INFO"
 
 [default.rtt]
 enabled = true
+log_path = "./logs"
 
 [default.gdb]
 # Whether or not a GDB server should be opened after flashing.
