@@ -10,6 +10,7 @@ rtic-monotonics = { version = "2.0.3", features = ["cortex-m-systick"] }
 rtt-target = { version = "0.3.1", features = ["cortex-m"] }
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
 stm32f1 = { version = "0.15.1", features = ["stm32f103"] }
+lhash = { version = "1.1.0", features = ["md5"] }
 
 log = "0.4"
 panic-custom = "0.1.1"
