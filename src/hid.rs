@@ -1,7 +1,7 @@
 //! Module that defines HID part of the firmware as well as defining all required trait implementations.
 #![allow(static_mut_refs)]
 
-use usb_device::{bus::UsbBusAllocator, device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid}, test_class::{MANUFACTURER, PRODUCT, SERIAL_NUMBER}, LangID};
+use usb_device::{bus::UsbBusAllocator, device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid}, LangID};
 use usbd_hid::{descriptor::{generator_prelude::*, *}, hid_class::HIDClass};
 use lhash::md5;
 
@@ -43,10 +43,14 @@ pub struct UsbTaikoDrum<'a> {
 impl<'a> UsbTaikoDrum<'a> {
     /// Initializes a new instance of [`UsbTaikoDrum`].
     pub(crate) fn new(usb: USB, gpioa: &mut GPIOA, rcc: &mut RCC) -> Self {
-        drop(usb); // UsbBus trait is handling the peripheral itself.
-        
+        drop(usb);
         /* Configuring USB lines. */
         rcc.apb2enr.modify(|_, w| w.iopaen().set_bit());
+        rcc.cfgr.modify(|_, w|
+            w.ppre1().div4()        // Clock prescaler for low-freq area (18 MHz). 
+             .usbpre().clear_bit()  // Divides SYSCLK by 1.5 to obtain 48 MHz.
+            /* USB peripheral requires PCLK1 frequency to be greater than 8MHz. */
+        );
 
         /* Setting USB reset condition on D+ line. */
         gpioa.crh.write(|w| 
@@ -55,7 +59,7 @@ impl<'a> UsbTaikoDrum<'a> {
              .cnf12().push_pull()
         );
         gpioa.odr.write(|w| w.odr12().clear_bit());
-        cortex_m::asm::delay(72_000);
+        cortex_m::asm::delay(720_000);
 
         gpioa.crh.write(|w| 
             w      /* Sets to floating input. */
@@ -72,7 +76,7 @@ impl<'a> UsbTaikoDrum<'a> {
         };
 
         log::info!("Preparing HID descriptor with polling speed of {} ms.", USB_HID_CLASS_POLLING_MS);
-        let hid = HIDClass::new(&alloc, DrumHitStrokeHidReport::desc(), USB_HID_CLASS_POLLING_MS);
+        let hid = HIDClass::new(&alloc, usbd_hid::descriptor::MouseReport::desc(), USB_HID_CLASS_POLLING_MS);
         let dev = UsbDeviceBuilder::new(&alloc, TAIKO_DRUM_VIDPID)
             .strings(&[
                 StringDescriptors::new(LangID::EN)
@@ -82,7 +86,7 @@ impl<'a> UsbTaikoDrum<'a> {
             ]).expect("Shall not panic as long as data type is correct.")
             .supports_remote_wakeup(false)
             .device_release(crate::version::TAIKO_HID_FIRMWARE_VERSION_BCD)
-            .device_class(0x03)
+            .device_class(0x00)
             .build();
 
         Self { dev, hid, _phantom: PhantomData }
@@ -94,6 +98,15 @@ impl<'a> UsbTaikoDrum<'a> {
         F: FnOnce(&mut HIDClass<UsbBus>)
     {
         self.dev.poll(&mut [&mut self.hid]).then(|| f(&mut self.hid)).is_some()
+    }
+
+    /// First long poll that must be performed during enumeration.
+    ///
+    /// Halts the execution until the device state will be changed to configured.
+    pub(crate) fn init_poll(&mut self) {
+        while self.dev.state() != UsbDeviceState::Configured {
+            self.dev.poll(&mut [&mut self.hid]);
+        }
     }
 }
 

@@ -22,6 +22,7 @@ mod app {
 
     use rtic_monotonics::systick::prelude::*;
     use rtic_sync::make_channel;
+    use stm32f1::stm32f103::Interrupt;
 
     /* Firmware clocks. */
     systick_monotonic!(Systick);
@@ -48,7 +49,7 @@ mod app {
     /// - Prepares communication channel between [`app::SensorHandling`] and [`app::UsbHidSender`] tasks.
     #[init]
     fn Init(ctx: Init::Context) -> (Shared, Local) {
-        let (mut core, mut dev) = (ctx.core, ctx.device);
+        let (core, mut dev) = (ctx.core, ctx.device);
         let (s, r) = make_channel!(PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY);
 
         /* Logging initialization. */
@@ -73,11 +74,10 @@ mod app {
         while rcc.cr.read().hserdy().bit_is_clear() {}
 
         rcc.cfgr.modify(|_, w|
-            w   /* Multiplying HSE to reach 72 MHz, so that USB will gain it's 48 MHz */
+            w   /* Multiplying HSE to reach a maximal value of 72 MHz */
              .pllsrc().set_bit()
              .pllxtpre().clear_bit()
              .pllmul().mul9()
-             .usbpre().clear_bit()
         );
 
         // Enabling PLL.
@@ -90,9 +90,11 @@ mod app {
         rcc.cfgr.modify(|_, w| w.sw().pll());
         while !rcc.cfgr.read().sws().is_pll() {}
 
+        let mut usb = UsbTaikoDrum::new(dev.USB, &mut dev.GPIOA, &mut dev.RCC);
+
         (
             Shared { 
-                usb_dev: UsbTaikoDrum::new(dev.USB, &mut dev.GPIOA, &mut dev.RCC), 
+                usb_dev: usb, 
             }, 
             Local {
                 piezo_handler: PiezoSensorHandler::new(
@@ -138,29 +140,29 @@ mod app {
     /// USB TX Polling.
     #[task(binds = USB_HP_CAN_TX, priority = 1, shared = [usb_dev])]
     fn UsbPollTx(mut ctx: UsbPollTx::Context) {
-        log::info!("USB_EVENT_Tx");
-
+        log::debug!("USB_EVENT_Tx");
         ctx.shared.usb_dev.lock(|dev| {
-            if !dev.poll(|_| {
-                panic!("WTF")
-            }) {
-                log::error!("Unable to poll USB.... USB_STATE: {:?}", dev.dev.state());
-            }
+            crate::app::__usb_poll(dev);
         });
     }
 
     /// USB RX Polling.
     #[task(binds = USB_LP_CAN_RX0, priority = 1, shared = [usb_dev])]
     fn UsbPollRx(mut ctx: UsbPollRx::Context) {
-        log::info!("USB_EVENT_Rx");
-
+        log::debug!("USB_EVENT_Rx");
         ctx.shared.usb_dev.lock(|dev| {
-            if !dev.poll(|_| {
-                panic!("WTF")
-            }) {
-                log::error!("Unable to poll USB.... USB_STATE: {:?}", dev.dev.state());
-            }
+            crate::app::__usb_poll(dev);
         });
+    }
+
+    fn __usb_poll(dev: &mut UsbTaikoDrum) {
+        dev.init_poll();
+
+        if !dev.poll(|_| {
+
+        }) {
+            log::warn!("Unable to poll USB. USB_STATE: {:?}", dev.dev.state());
+        }
     }
 
     // Panic handler.
@@ -175,7 +177,7 @@ mod app {
         cortex_m::peripheral::SCB::sys_reset();  */
     });
 
-    const ARM_SYSTICK_HZ: u32 = 12_000_000;
+    const ARM_SYSTICK_HZ: u32 = 72_000_000;
 }
 
 #[macro_export]
