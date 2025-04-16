@@ -1,7 +1,5 @@
 //! Defines a piezoelectric sensor driver to detect precise hits for Taiko Drum.
 
-use crate::app;
-
 use super::pac::{RCC, ADC1, ADC2, GPIOA, TIM4};
 use rtic_sync::channel::TrySendError;
 
@@ -92,9 +90,8 @@ impl PiezoSensorHandler {
         /* Enabling clocking for ADC1, ADC2 from APB2 high frequency domain. */
         rcc.cfgr.modify(|_, w| 
             w
-             .ppre1().div16()       // Clock prescaler for low-freq area.
-             .ppre2().div1()        // Fully sampled from prescaled AHB (12 Mhz)
-             .adcpre().div2()       // Least div rate for ADC sampling.
+             .ppre2().div1()        // Fully sampled from AHB (72 MHz)
+             .adcpre().div2()       // Least div rate for ADC sampling. (36 MHz)
         );
         rcc.apb1enr.modify(|_, w|   // Enables clock for TIM4.
             w
@@ -224,7 +221,7 @@ impl PiezoSensorHandler {
                  * input lag spike
                  * */
                 TrySendError::Full(_) => {
-                    log::warn!("FIFO queue is full. Loosing data.");
+/*                     log::warn!("FIFO queue is full. Loosing data."); */
                     crate::int_disable!(ADC1_2);    // Stopping the transmition for some time.
                 }
             }
