@@ -29,14 +29,15 @@ const TAIKO_DRUM_VIDPID: UsbVidPid  = UsbVidPid(USB_VID, USB_PID);
 
 pub(crate) type UsbBus = stm32_usbd::UsbBus<UsbControllerSTM32F103>;
 
-/// Main USB communication wrapper structure for Taiko Drum.
+/// Main USB communication structure for Taiko Drum.
 ///
-/// # Note
-///
-/// This wrapper is specific to STM32F103xx family of microcontrollers.
+/// Utilizes STM's USB peripheral to send HID reports for cross-platform compatibility and a serial
+/// commication for desktop application.
 pub struct UsbTaikoDrum<'a> {
+    /// Physical USB device wrapper.
     pub(crate) dev: UsbDevice<'a, UsbBus>,
-    pub(crate) hid: HIDClass<'a, UsbBus>,
+    /// HID Class for simulating a USB keyboard clicks.
+    pub(crate) hid_keyboard: HIDClass<'a, UsbBus>,
     _phantom: PhantomData<USB>,
 }
 
@@ -52,6 +53,36 @@ impl<'a> UsbTaikoDrum<'a> {
             /* USB peripheral requires PCLK1 frequency to be greater than 8MHz. */
         );
 
+        Self::reset(gpioa);
+
+        // This is safe as long as this function is only called once.
+        let alloc = unsafe {
+            USB_ALLOCATOR.replace(UsbBus::new(UsbControllerSTM32F103));
+            USB_ALLOCATOR.as_ref().unwrap()
+        };
+
+        log::info!("Preparing HID descriptor with polling speed of {} ms.", USB_HID_CLASS_POLLING_MS);
+        /* Building HID classes for communication with host machine. */
+        let hid_keyboard = HIDClass::new(&alloc, DrumHitStrokeHidReport::desc(), USB_HID_CLASS_POLLING_MS);
+
+        /* Initializing the USB device. */
+        let dev = UsbDeviceBuilder::new(&alloc, TAIKO_DRUM_VIDPID)
+            .strings(&[
+                StringDescriptors::new(LangID::EN)
+                    .manufacturer(USB_MANUFACTURER)
+                    .product(USB_PRODUCT)
+                    .serial_number(USB_SERIAL_NUMBER)
+            ]).expect("Shall not panic as long as data type is correct.")
+            .supports_remote_wakeup(false)
+            .device_release(crate::version::TAIKO_HID_FIRMWARE_VERSION_BCD)
+            .device_class(0x03)
+            .build();
+
+        Self { dev, hid_keyboard, _phantom: PhantomData }
+    }
+
+    /// Simulates a USB disconnection by pulling down the D+ line.
+    pub(crate) fn reset(gpioa: &mut GPIOA) {
         /* Setting USB reset condition on D+ line. */
         gpioa.crh.write(|w| 
             w      /* Pulling the line LOW, which simulates disconnection */
@@ -68,52 +99,32 @@ impl<'a> UsbTaikoDrum<'a> {
              .cnf11().open_drain()
              .cnf12().open_drain()
         );
-
-        // This is safe as long as this function is only called once.
-        let alloc = unsafe {
-            USB_ALLOCATOR.replace(UsbBus::new(UsbControllerSTM32F103));
-            USB_ALLOCATOR.as_ref().unwrap()
-        };
-
-        log::info!("Preparing HID descriptor with polling speed of {} ms.", USB_HID_CLASS_POLLING_MS);
-        let hid = HIDClass::new(&alloc, usbd_hid::descriptor::MouseReport::desc(), USB_HID_CLASS_POLLING_MS);
-        let dev = UsbDeviceBuilder::new(&alloc, TAIKO_DRUM_VIDPID)
-            .strings(&[
-                StringDescriptors::new(LangID::EN)
-                    .manufacturer(USB_MANUFACTURER)
-                    .product(USB_PRODUCT)
-                    .serial_number(USB_SERIAL_NUMBER)
-            ]).expect("Shall not panic as long as data type is correct.")
-            .supports_remote_wakeup(false)
-            .device_release(crate::version::TAIKO_HID_FIRMWARE_VERSION_BCD)
-            .device_class(0x00)
-            .build();
-
-        Self { dev, hid, _phantom: PhantomData }
     }
 
-    /// Allows to perform a HID communication over USB.
-    pub(crate) fn poll<F>(&mut self, f: F) -> bool
-    where
-        F: FnOnce(&mut HIDClass<UsbBus>)
-    {
-        self.dev.poll(&mut [&mut self.hid]).then(|| f(&mut self.hid)).is_some()
+    /// Polling function wrapper.
+    pub(crate) fn poll(&mut self) {
+        self.dev.poll(&mut [&mut self.hid_keyboard]);
     }
 
     /// First long poll that must be performed during enumeration.
     ///
     /// Halts the execution until the device state will be changed to configured.
     pub(crate) fn init_poll(&mut self) {
-        while self.dev.state() != UsbDeviceState::Configured {
-            self.dev.poll(&mut [&mut self.hid]);
+        // Locking on polling until device will be fully configured.
+        if self.dev.state() == UsbDeviceState::Default {
+            while self.dev.state() != UsbDeviceState::Addressed { self.poll() }
+            log::info!("USB device obtained it's address.");
+            while self.dev.state() != UsbDeviceState::Configured { self.poll() }
+            log::info!("USB device is fully configured by the host machine.");
         }
     }
 }
 
 /// Drum Stroke HID Class Report.
 ///
-/// Acts as a keyboard device that sends corresponding keycodes mapped to the corresponding hitstroke
-/// obtained from the four drum sensors.
+/// Acts as a keyboard device that sends corresponding keycodes mapped to the corresponding hitstrokes
+/// obtained from the four drum sensors. Allows to play from the Taiko Drum just like from regular
+/// keyboard.
 #[gen_hid_descriptor(
     (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = KEYBOARD) = {
         (usage_page = KEYBOARD, usage_min = 0xE0, usage_max = 0xE7) = {
