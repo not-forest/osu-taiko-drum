@@ -17,12 +17,13 @@ mod hid;
     peripherals = true,
 )]
 mod app {
+    use crate::hid::UsbAllocator;
+
     use super::piezo::{PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY, PiezoSensorHandler, Receiver};
     use super::hid::UsbTaikoDrum;
 
     use rtic_monotonics::systick::prelude::*;
     use rtic_sync::make_channel;
-    use usbd_hid::UsbError;
 
     /* Firmware clocks. */
     systick_monotonic!(Systick);
@@ -51,9 +52,11 @@ mod app {
     /// - Prepares ADC1 & ADC2 for reading input from four piezoelectric sensors in injected
     /// simultaneous mode;
     /// - Prepares communication channel between [`app::SensorHandling`] and [`app::UsbHidSender`] tasks.
-    #[init]
+    #[init(
+        local = [usb_alloc: Option<UsbAllocator> = None]
+    )]
     fn Init(ctx: Init::Context) -> (Shared, Local) {
-        let (core, mut dev) = (ctx.core, ctx.device);
+        let (core, mut dev, alloc) = (ctx.core, ctx.device, ctx.local.usb_alloc);
         let (s, r) = make_channel!(PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY);
 
         /* Logging initialization. */
@@ -94,7 +97,7 @@ mod app {
         rcc.cfgr.modify(|_, w| w.sw().pll());
         while !rcc.cfgr.read().sws().is_pll() {}
 
-        let usb_dev = UsbTaikoDrum::new(dev.USB, &mut dev.GPIOA, &mut dev.RCC);
+        let usb_dev = UsbTaikoDrum::new(alloc, dev.USB, &mut dev.GPIOA, &mut dev.RCC);
         let piezo_handler = PiezoSensorHandler::new(
             (dev.ADC1, dev.ADC2), &mut dev.GPIOA, &mut dev.RCC, dev.TIM4, s.clone()
         );

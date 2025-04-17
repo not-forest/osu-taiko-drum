@@ -1,5 +1,4 @@
 //! Module that defines HID part of the firmware as well as defining all required trait implementations.
-#![allow(static_mut_refs)]
 
 use usb_device::{bus::UsbBusAllocator, device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid}, LangID};
 use usbd_hid::{descriptor::{generator_prelude::*, *}, hid_class::HIDClass};
@@ -7,8 +6,6 @@ use lhash::md5;
 
 use core::marker::PhantomData;
 use super::pac::{RCC, USB, GPIOA};
-
-static mut USB_ALLOCATOR: Option<UsbBusAllocator<UsbBus>> = None;
 
 /* Constant USB definitions. See: https://github.com/obdev/v-usb/blob/master/usbdrv/USB-IDs-for-free.txt */
 const USB_VID: u16 = 0x16c0;
@@ -28,6 +25,7 @@ const USB_HID_CLASS_POLLING_MS: u8 = 60;
 const TAIKO_DRUM_VIDPID: UsbVidPid  = UsbVidPid(USB_VID, USB_PID);
 
 pub(crate) type UsbBus = stm32_usbd::UsbBus<UsbControllerSTM32F103>;
+pub(crate) type UsbAllocator = UsbBusAllocator<UsbBus>;
 
 /// Main USB communication structure for Taiko Drum.
 ///
@@ -43,7 +41,12 @@ pub struct UsbTaikoDrum<'a> {
 
 impl<'a> UsbTaikoDrum<'a> {
     /// Initializes a new instance of [`UsbTaikoDrum`].
-    pub(crate) fn new(usb: USB, gpioa: &mut GPIOA, rcc: &mut RCC) -> Self {
+    pub(crate) fn new(
+        alloc: &'a mut Option<UsbAllocator>, 
+        usb: USB, 
+        gpioa: &mut GPIOA, 
+        rcc: &mut RCC
+    ) -> Self {
         drop(usb);
         /* Configuring USB lines. */
         rcc.apb2enr.modify(|_, w| w.iopaen().set_bit());
@@ -56,17 +59,21 @@ impl<'a> UsbTaikoDrum<'a> {
         Self::reset(gpioa);
 
         // This is safe as long as this function is only called once.
-        let alloc = unsafe {
-            USB_ALLOCATOR.replace(UsbBus::new(UsbControllerSTM32F103));
-            USB_ALLOCATOR.as_ref().unwrap()
-        };
+        alloc.replace(UsbBus::new(UsbControllerSTM32F103));
 
         log::info!("Preparing HID descriptor with polling speed of {} ms.", USB_HID_CLASS_POLLING_MS);
         /* Building HID classes for communication with host machine. */
-        let hid_keyboard = HIDClass::new(&alloc, DrumHitStrokeHidReport::desc(), USB_HID_CLASS_POLLING_MS);
+        let hid_keyboard = HIDClass::new(
+            alloc.as_ref().expect("Won't panic if this function is only called once."), 
+            DrumHitStrokeHidReport::desc(), 
+            USB_HID_CLASS_POLLING_MS
+        );
 
         /* Initializing the USB device. */
-        let dev = UsbDeviceBuilder::new(&alloc, TAIKO_DRUM_VIDPID)
+        let dev = UsbDeviceBuilder::new(
+            alloc.as_ref().expect("Won't panic if this function is only called once."),
+            TAIKO_DRUM_VIDPID
+        )
             .strings(&[
                 StringDescriptors::new(LangID::EN)
                     .manufacturer(USB_MANUFACTURER)
