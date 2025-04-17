@@ -22,18 +22,22 @@ mod app {
 
     use rtic_monotonics::systick::prelude::*;
     use rtic_sync::make_channel;
-    use stm32f1::stm32f103::Interrupt;
+    use usbd_hid::UsbError;
 
     /* Firmware clocks. */
     systick_monotonic!(Systick);
 
     #[shared]
     struct Shared {
+        /// Shared pins of GPIOA port.
+        gpioa: super::pac::GPIOA,
+        /// USB device wrapper is used across interrupt handlers and tasks to communicate withhost.
         usb_dev: UsbTaikoDrum<'static>,
     }
     
     #[local]
     struct Local {
+        /// Local to ADC1_2 interrupt handler, which reads the state of current hits periodically.
         piezo_handler: PiezoSensorHandler,
     }
 
@@ -90,37 +94,53 @@ mod app {
         rcc.cfgr.modify(|_, w| w.sw().pll());
         while !rcc.cfgr.read().sws().is_pll() {}
 
-        let mut usb = UsbTaikoDrum::new(dev.USB, &mut dev.GPIOA, &mut dev.RCC);
+        let usb_dev = UsbTaikoDrum::new(dev.USB, &mut dev.GPIOA, &mut dev.RCC);
+        let piezo_handler = PiezoSensorHandler::new(
+            (dev.ADC1, dev.ADC2), &mut dev.GPIOA, &mut dev.RCC, dev.TIM4, s.clone()
+        );
 
         (
-            Shared { 
-                usb_dev: usb, 
-            }, 
-            Local {
-                piezo_handler: PiezoSensorHandler::new(
-                    (dev.ADC1, dev.ADC2), &mut dev.GPIOA, &mut dev.RCC, dev.TIM4, s.clone()
-                ),
-            },
+            Shared { usb_dev, gpioa: dev.GPIOA }, 
+            Local { piezo_handler },
         )    
     }
 
     /// Handles the USB HID connection with the host machine.
     ///
-    ///
+    /// Obtained samples are being parsed to detect a proper drum hit and it's location. Based on
+    /// the current hits, HID reports are being sent to the host machine, simulating a keyboard
+    /// device that presses the corresponding keystrokes.
     #[task(priority = 2, shared = [usb_dev])]
     async fn UsbHidSender(mut ctx: UsbHidSender::Context, mut r: Receiver) {
+        use usb_device::{UsbError, prelude::UsbDeviceState};
         log::info!("UsbHidSender task spawned. Awaiting on upcoming data.");
 
         /* Handling samples obtained from the piezoelectric sensor */
         while let Ok(sample) = r.recv().await {
 /*             log::info!("Obtained sample value: {:#?}", sample); */
 
-            /* ctx.shared.usb_dev.lock(|dev| {
-                dev.hid.push_input(&super::hid::DrumHitStrokeHidReport::default()).unwrap()
-            }); */
+            ctx.shared.usb_dev.lock(|dev| {
+                dev.poll();
+
+                match dev.hid_keyboard.push_input(&super::hid::DrumHitStrokeHidReport::default()) {
+                    Ok(report_length) => log::info!("Bytes send: {}", report_length),
+                    Err(usb_err) => match usb_err {
+                        // Checking if device is properly initialized at that point.
+                        UsbError::WouldBlock => {
+                            match dev.dev.state() {
+                                UsbDeviceState::Configured => (),
+                                _ => dev.poll(),
+                            }
+                        },
+                        UsbError::Unsupported => dev.poll(),
+                        _ => panic!("{:?}", usb_err),
+                    }
+                }
+            });
 
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
         }
+
     }
 
     /// Piezoelectric sensor handling hardware task.
@@ -151,18 +171,13 @@ mod app {
     fn UsbPollRx(mut ctx: UsbPollRx::Context) {
         log::debug!("USB_EVENT_Rx");
         ctx.shared.usb_dev.lock(|dev| {
+            dev.init_poll();   /* Low priority interrupts include enumeration requests and error handling. */
             crate::app::__usb_poll(dev);
         });
     }
 
     fn __usb_poll(dev: &mut UsbTaikoDrum) {
-        dev.init_poll();
-
-        if !dev.poll(|_| {
-
-        }) {
-            log::warn!("Unable to poll USB. USB_STATE: {:?}", dev.dev.state());
-        }
+        dev.poll();
     }
 
     // Panic handler.
