@@ -1,6 +1,7 @@
 //! Library space for Taiko Drum Firmware.
 #![no_std]
 #![no_main]
+#![feature(slice_from_ptr_range)]
 
 use stm32f1::stm32f103 as pac;
 
@@ -8,22 +9,28 @@ use stm32f1::stm32f103 as pac;
 mod logger;
 /// Piezoelectric sensors driver with a set of analysis functions.
 mod piezo;
+/// Parses samples to detect proper hits.
+mod parser;
 /// HID clas implementation for drum controller.
 mod hid;
+/// Firmware configuration (Non-volatile).
+mod cfg;
 
 #[rtic::app(
     device = stm32f1::stm32f103,
-    dispatchers = [CAN_RX1],
+    dispatchers = [CAN_RX1, SDIO],
     peripherals = true,
 )]
 mod app {
-    use crate::hid::UsbAllocator;
-
-    use super::piezo::{PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY, PiezoSensorHandler, Receiver};
-    use super::hid::UsbTaikoDrum;
-
+    use usb_device::{UsbError, prelude::UsbDeviceState};
     use rtic_monotonics::systick::prelude::*;
     use rtic_sync::make_channel;
+    use usbd_serial::embedded_io::Read;
+
+    use super::cfg::DrumConfig;
+    use super::piezo::{PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY, PiezoSensorHandler, Receiver};
+    use super::hid::{UsbTaikoDrum, UsbAllocator, DrumHitStrokeHidReport};
+    use super::parser::Parser as P;
 
     /* Firmware clocks. */
     systick_monotonic!(Systick);
@@ -40,6 +47,12 @@ mod app {
     struct Local {
         /// Local to ADC1_2 interrupt handler, which reads the state of current hits periodically.
         piezo_handler: PiezoSensorHandler,
+        /// Holds current drum configuration.
+        cfg: DrumConfig,
+        /// Flash is only controller by [`UsbConfigManager`] task to save new configurations on runtime.
+        flash: super::pac::FLASH,
+        /// Sensor samples parser.
+        parser: P,
     }
 
     /// Initialization function for drum functionality.
@@ -71,7 +84,8 @@ mod app {
         log::info!("Internal clocks enabled");
 
         /* Tasks */ 
-        UsbHidSender::spawn(r).expect("First HID task initialization.");
+        UsbConfigManager::spawn().expect("First vendor HID task initialization.");
+/*         Parser::spawn(r).expect("First parser initialization."); */
 
         /* Setting SYSCLK source to PLL (72 MHz on this line.) */
         let (rcc, flash) = (&mut dev.RCC, &mut dev.FLASH);
@@ -101,11 +115,57 @@ mod app {
         let piezo_handler = PiezoSensorHandler::new(
             (dev.ADC1, dev.ADC2), &mut dev.GPIOA, &mut dev.RCC, dev.TIM4, s.clone()
         );
+        let cfg = DrumConfig::new(&mut dev.FLASH);
 
         (
             Shared { usb_dev, gpioa: dev.GPIOA }, 
-            Local { piezo_handler },
+            Local { piezo_handler, cfg, flash: dev.FLASH, parser: P::default() },
         )    
+    }
+
+    /// Parses upcoming samples to detect proper hits and ignore spurious ones.
+    #[task(local = [parser])]
+    async fn Parser(ctx: Parser::Context, mut r: Receiver) {
+        let parser = ctx.local.parser;
+        log::info!("Parser task spawned. Waiting for samples.");
+
+        /* Handling samples obtained from the piezoelectric sensor */
+        while let Ok(sample) = r.recv().await {
+            if let Some(new_state) = parser.parse(sample) {
+                UsbHidSender::spawn(new_state).unwrap();
+            }
+            super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
+        }
+    }
+
+    /// Task for listening on upcoming configuration data from the host machine.
+    #[task(local = [cfg, flash], shared = [usb_dev])]
+    async fn UsbConfigManager(mut ctx: UsbConfigManager::Context) {
+        let mut buff = [0u8; 8];
+        let (cfg, flash) = (ctx.local.cfg, ctx.local.flash);
+        log::info!("UsbConfigManager task spawned. Polling USB device.");
+
+        loop {
+            ctx.shared.usb_dev.lock(|dev| {
+                dev.poll();
+
+                match dev.serial.read(&mut buff) {
+                    Ok(amount) => if amount > 0 {
+                        log::info!("DEBUG SERIAL: {:?}", buff);
+                    },
+                    Err(usb_err) => match usb_err {
+                        // Checking if device is properly initialized at that point.
+                        UsbError::WouldBlock => {
+                            match dev.dev.state() {
+                                UsbDeviceState::Configured => dev.init_poll(),
+                                _ => (),
+                            }
+                        },
+                        _ => panic!("{:?}", usb_err),
+                    }
+                }
+            });
+        }
     }
 
     /// Handles the USB HID connection with the host machine.
@@ -113,37 +173,28 @@ mod app {
     /// Obtained samples are being parsed to detect a proper drum hit and it's location. Based on
     /// the current hits, HID reports are being sent to the host machine, simulating a keyboard
     /// device that presses the corresponding keystrokes.
-    #[task(priority = 2, shared = [usb_dev])]
-    async fn UsbHidSender(mut ctx: UsbHidSender::Context, mut r: Receiver) {
-        use usb_device::{UsbError, prelude::UsbDeviceState};
-        log::info!("UsbHidSender task spawned. Awaiting on upcoming data.");
+    #[task(shared = [usb_dev])]
+    async fn UsbHidSender(mut ctx: UsbHidSender::Context, report: DrumHitStrokeHidReport) {
+        log::info!("UsbHidSender task spawned. Polling USB device.");
 
-        /* Handling samples obtained from the piezoelectric sensor */
-        while let Ok(sample) = r.recv().await {
-/*             log::info!("Obtained sample value: {:#?}", sample); */
-
-            ctx.shared.usb_dev.lock(|dev| {
-                dev.poll();
-
-                match dev.hid_keyboard.push_input(&super::hid::DrumHitStrokeHidReport::default()) {
-                    Ok(report_length) => log::info!("Bytes send: {}", report_length),
-                    Err(usb_err) => match usb_err {
-                        // Checking if device is properly initialized at that point.
-                        UsbError::WouldBlock => {
-                            match dev.dev.state() {
-                                UsbDeviceState::Configured => (),
-                                _ => dev.poll(),
-                            }
-                        },
-                        UsbError::Unsupported => dev.poll(),
-                        _ => panic!("{:?}", usb_err),
-                    }
+        ctx.shared.usb_dev.lock(|dev| {
+            dev.poll();
+            
+            match dev.hid_keyboard.push_input(&report) {
+                Ok(report_length) => log::info!("Bytes send: {}", report_length),
+                Err(usb_err) => match usb_err {
+                    // Checking if device is properly initialized at that point.
+                    UsbError::WouldBlock => {
+                        match dev.dev.state() {
+                            UsbDeviceState::Configured => dev.init_poll(),
+                            _ => (),
+                        }
+                    },
+                    UsbError::Unsupported => (),
+                    _ => panic!("{:?}", usb_err),
                 }
-            });
-
-            super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
-        }
-
+            }
+        });
     }
 
     /// Piezoelectric sensor handling hardware task.
