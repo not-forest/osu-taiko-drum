@@ -9,10 +9,10 @@ const INTERRUPT_SAMPLER_TIMER_CC: u16 = 1000;
 const WATCHDOG_THRESHOLD_HALT_MODE_VALUE: u16 = 500;
 
 /* Sensor position to channel mapping, */
-const LEFT_EDGE_PIEZO: u8 = 3;
-const LEFT_CENTER_PIEZO: u8 = 4;
-const RIGHT_CENTER_PIEZO: u8 = 5;
-const RIGHT_EDGE_PIEZO: u8 = 6;
+const LEFT_KAT_PIEZO: u8 = 3;
+const LEFT_DON_PIEZO: u8 = 4;
+const RIGHT_DON_PIEZO: u8 = 5;
+const RIGHT_KAT_PIEZO: u8 = 6;
 
 /// Communication queue capacity.
 pub(crate) const PIEZO_SENSOR_QUEUE_CAPACITY: usize = 32;
@@ -20,10 +20,16 @@ pub(crate) const PIEZO_SENSOR_QUEUE_CAPACITY: usize = 32;
 ///
 /// Sensor handler samples central and edge sensors simultaneously in one such value.
 #[repr(C, packed)]
-#[derive(Debug)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PiezoSample {
-    le: u16, lc: u16,
-    rc: u16, re: u16,
+    pub le: u16, pub lc: u16,
+    pub rc: u16, pub re: u16,
+}
+
+impl PiezoSample {
+    pub(crate) fn max(&self) -> u16 {
+        self.le.max(self.re.max(self.lc.max(self.rc)))
+    }
 }
 
 /// Defines sampling mode for [`PiezoSensorHandler`].
@@ -148,19 +154,19 @@ impl PiezoSensorHandler {
          *
          * Center hit sensors and edge hit sensors are being sampled simultaneously. Each ADC
          * handles one edge and one center piezoelectric sensor in the following order:
-         * ADC1: LEFT_EDGE -> LEFT_CENTER -> JEOC 
-         * ADC2: RIGHT_EDGE -> RIGHT_CENTER -> JEOC 
+         * ADC1: LEFT_KAT -> LEFT_DON -> JEOC 
+         * ADC2: RIGHT_KAT -> RIGHT_DON -> JEOC 
          * */
         adcs.0.jsqr.modify(|_, w|
             w.jl().variant(1)
-             .jsq3().variant(LEFT_EDGE_PIEZO)
-             .jsq4().variant(LEFT_CENTER_PIEZO)
+             .jsq3().variant(LEFT_KAT_PIEZO)
+             .jsq4().variant(LEFT_DON_PIEZO)
         );
 
         adcs.1.jsqr.modify(|_, w|
             w.jl().variant(1)
-             .jsq3().variant(RIGHT_EDGE_PIEZO)
-             .jsq4().variant(RIGHT_CENTER_PIEZO)
+             .jsq3().variant(RIGHT_KAT_PIEZO)
+             .jsq4().variant(RIGHT_DON_PIEZO)
         );
         
         // Configure watchdog thresholds
@@ -215,6 +221,7 @@ impl PiezoSensorHandler {
                  * */
                 TrySendError::NoReceiver(_) => {
                     log::warn!("Tried to send without a receiver. Loosing data.");
+                    crate::int_disable!(ADC1_2);
                 },
                 /*  
                  * This means that [`super::app::UsbHidSender`] task is starving. Might cause huge
