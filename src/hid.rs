@@ -1,11 +1,16 @@
 //! Module that defines HID part of the firmware as well as defining all required trait implementations.
 
-use usb_device::{bus::UsbBusAllocator, device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid}, LangID};
 use usbd_hid::{descriptor::{generator_prelude::*, *}, hid_class::HIDClass};
-use lhash::md5;
+use usbd_serial::SerialPort;
+use usb_device::{
+    bus::UsbBusAllocator, 
+    device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid}, 
+    LangID
+};
 
 use core::marker::PhantomData;
 use super::pac::{RCC, USB, GPIOA};
+use lhash::md5;
 
 /* Constant USB definitions. See: https://github.com/obdev/v-usb/blob/master/usbdrv/USB-IDs-for-free.txt */
 const USB_VID: u16 = 0x16c0;
@@ -36,6 +41,8 @@ pub struct UsbTaikoDrum<'a> {
     pub(crate) dev: UsbDevice<'a, UsbBus>,
     /// HID Class for simulating a USB keyboard clicks.
     pub(crate) hid_keyboard: HIDClass<'a, UsbBus>,
+    /// Serial port interface for straight communication between host and firmware.
+    pub(crate) serial: SerialPort<'a, UsbBus>,
     _phantom: PhantomData<USB>,
 }
 
@@ -68,6 +75,10 @@ impl<'a> UsbTaikoDrum<'a> {
             DrumHitStrokeHidReport::desc(), 
             USB_HID_CLASS_POLLING_MS
         );
+    
+        let serial = SerialPort::new(
+            alloc.as_ref().expect("Won't panic if this function is only called once.")
+        );
 
         /* Initializing the USB device. */
         let dev = UsbDeviceBuilder::new(
@@ -85,7 +96,7 @@ impl<'a> UsbTaikoDrum<'a> {
             .device_class(0x03)
             .build();
 
-        Self { dev, hid_keyboard, _phantom: PhantomData }
+        Self { dev, hid_keyboard, serial, _phantom: PhantomData }
     }
 
     /// Simulates a USB disconnection by pulling down the D+ line.
@@ -110,7 +121,7 @@ impl<'a> UsbTaikoDrum<'a> {
 
     /// Polling function wrapper.
     pub(crate) fn poll(&mut self) {
-        self.dev.poll(&mut [&mut self.hid_keyboard]);
+        self.dev.poll(&mut [&mut self.hid_keyboard, &mut self.serial]);
     }
 
     /// First long poll that must be performed during enumeration.
