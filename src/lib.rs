@@ -5,13 +5,15 @@
 
 use stm32f1::stm32f103 as pac;
 
-/// Contains configured logger for the application.
+/// Contains configured logger for application.
 mod logger;
-/// Piezoelectric sensors driver with a set of analysis functions.
+/// Piezoelectric sensors driver.
 mod piezo;
 /// Parses samples to detect proper hits.
 mod parser;
-/// HID clas implementation for drum controller.
+/// USB device handling.
+mod usb;
+/// HID class implementations for drum controller.
 mod hid;
 /// Firmware configuration (Non-volatile).
 mod cfg;
@@ -25,11 +27,11 @@ mod app {
     use usb_device::{UsbError, prelude::UsbDeviceState};
     use rtic_monotonics::systick::prelude::*;
     use rtic_sync::make_channel;
-    use usbd_serial::embedded_io::Read;
 
     use super::cfg::DrumConfig;
     use super::piezo::{PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY, PiezoSensorHandler, Receiver};
-    use super::hid::{UsbTaikoDrum, UsbAllocator, DrumHitStrokeHidReport};
+    use super::usb::{UsbTaikoDrum, UsbAllocator};
+    use super::hid::DrumHitStrokeHidReport;
     use super::parser::Parser as P;
 
     /* Firmware clocks. */
