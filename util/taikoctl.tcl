@@ -23,7 +23,8 @@ proc help {} {
     puts "                    e.g. \"left_don=X right_kat=V\""
     puts "  Valid configuration values:"
     puts "  left_don, right_don, left_kat, right_kat"
-    puts "  --read             Read current configuration from the device. This option is set as default if no configuration is provided."
+    puts "  --reset            Resets the firmware."
+    puts "  --read -r          Read current configuration from the device. This option is set as default if no configuration is provided."
     puts "  --help, -h         Show this help message"
     puts "  --version, -v      Shows current version of this utility. The version will always match the current firmware version."
     puts ""
@@ -39,10 +40,11 @@ while {$i < [llength $argv]} {
     incr i
 
     switch -- $key {
-        -p { set key --port }
-        -c { set key --configure }
-        -h { set key --help }
-        -v { set key --version }
+        -p { set key --port         }
+        -c { set key --configure    }
+        -r { set key --read         }
+        -h { set key --help         }
+        -v { set key --version      }
     }
 
     switch -- $key {
@@ -59,6 +61,16 @@ while {$i < [llength $argv]} {
         --read {
             if {$cmd eq ""} {
                 set cmd read
+            } else {
+                puts "Invalid command merging. Some arguments collide with each other."
+                exit 1
+            }
+            continue
+        }
+
+        --reset {
+            if {$cmd eq ""} {
+                set cmd reset
             } else {
                 puts "Invalid command merging. Some arguments collide with each other."
                 exit 1
@@ -238,10 +250,13 @@ if {$cmd eq "read"} {
         set val_byte [byte [scan $config($key) %c]]
 
         puts -nonewline $conn "${cmd_byte}${val_byte}"
-        flush $conn
         
         incr len 2
     }
+    flush $conn
 
     puts "Configuration of ${len} bytes is sent."
+} elseif {$cmd eq "reset"} {
+    puts -nonewline $conn [byte $CMD_RESET]
+    flush $conn
 }
