@@ -17,10 +17,12 @@ mod usb;
 mod hid;
 /// Firmware configuration (Non-volatile).
 mod cfg;
+/// Runtime programmer.
+mod prog;
 
 #[rtic::app(
     device = stm32f1::stm32f103,
-    dispatchers = [CAN_RX1, SDIO],
+    dispatchers = [SDIO],
     peripherals = true,
 )]
 mod app {
@@ -30,15 +32,17 @@ mod app {
 
     use super::cfg::DrumConfig;
     use super::piezo::{PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY, PiezoSensorHandler, Receiver};
-    use super::usb::{UsbTaikoDrum, UsbAllocator};
+    use super::usb::{UsbTaikoDrum, UsbAllocator, UsbBus};
     use super::hid::DrumHitStrokeHidReport;
     use super::parser::Parser as P;
+    use super::prog::Programmer;
 
     /* Firmware clocks. */
     systick_monotonic!(Systick);
 
     #[shared]
     struct Shared {
+        reset_pend: bool,
         /// Shared pins of GPIOA port.
         gpioa: super::pac::GPIOA,
         /// USB device wrapper is used across interrupt handlers and tasks to communicate withhost.
@@ -49,12 +53,19 @@ mod app {
     struct Local {
         /// Local to ADC1_2 interrupt handler, which reads the state of current hits periodically.
         piezo_handler: PiezoSensorHandler,
-        /// Holds current drum configuration.
-        cfg: DrumConfig,
-        /// Flash is only controller by [`UsbConfigManager`] task to save new configurations on runtime.
-        flash: super::pac::FLASH,
         /// Sensor samples parser.
         parser: P,
+    }
+
+    /// Performs a software system reset.
+    #[task(local = [timeout: u32 = 10], shared = [reset_pend])]
+    async fn FirmwareReset(mut ctx: FirmwareReset::Context) {
+        ctx.shared.reset_pend.lock(|pend| *pend = true);
+
+        let timeout = *ctx.local.timeout;
+        log::info!("A system reset was called. Restarting in {} seconds...", timeout);
+        Systick::delay(timeout.secs()).await;
+        rtic::export::SCB::sys_reset();
     }
 
     /// Initialization function for drum functionality.
@@ -80,10 +91,6 @@ mod app {
         }  
         log::info!("Booting taiko firmware version: [{}]", super::version::TAIKO_HID_FIRMWARE_VERSION);
 
-        /* Monotonics. */
-        log::debug!("Enabling Systick monotonic...");
-        Systick::start(core.SYST, ARM_SYSTICK_HZ);
-        log::info!("Internal clocks enabled");
 
         /* Tasks */ 
         UsbConfigManager::spawn().expect("First vendor HID task initialization.");
@@ -109,19 +116,33 @@ mod app {
 
         flash.acr.modify(|_, w| w.latency().ws2());
 
+        // Architecture specific USB bus allocator.
+        alloc.replace(UsbBus::new(super::usb::UsbControllerSTM32F103));
+
         // Sys clock switch.
         rcc.cfgr.modify(|_, w| w.sw().pll());
         while !rcc.cfgr.read().sws().is_pll() {}
 
-        let usb_dev = UsbTaikoDrum::new(alloc, dev.USB, &mut dev.GPIOA, &mut dev.RCC);
+        /* Monotonics. */
+        log::debug!("Enabling Systick monotonic...");
+        Systick::start(core.SYST, ARM_SYSTICK_HZ);
+        log::info!("Internal clocks enabled");
+
+        // Runtime firmware and configuration programmer.
+        let programmer = Programmer::new(
+            alloc,
+            DrumConfig::new(&mut dev.FLASH),
+            dev.FLASH,
+        );
+
+        let usb_dev = UsbTaikoDrum::new(alloc, programmer, dev.USB, &mut dev.GPIOA, &mut dev.RCC);
         let piezo_handler = PiezoSensorHandler::new(
             (dev.ADC1, dev.ADC2), &mut dev.GPIOA, &mut dev.RCC, dev.TIM4, s.clone()
         );
-        let cfg = DrumConfig::new(&mut dev.FLASH);
 
         (
-            Shared { usb_dev, gpioa: dev.GPIOA }, 
-            Local { piezo_handler, cfg, flash: dev.FLASH, parser: P::default() },
+            Shared { usb_dev, gpioa: dev.GPIOA, reset_pend: false }, 
+            Local { piezo_handler, parser: P::default() },
         )    
     }
 
@@ -133,40 +154,28 @@ mod app {
 
         /* Handling samples obtained from the piezoelectric sensor */
         while let Ok(sample) = r.recv().await {
+            log::info!("SAMPLE_le: {}", sample.le);
             if let Some(new_state) = parser.parse(sample) {
                 UsbHidSender::spawn(new_state).unwrap();
             }
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
+            Systick::delay(10.millis()).await;
         }
     }
 
     /// Task for listening on upcoming configuration data from the host machine.
-    #[task(local = [cfg, flash], shared = [usb_dev])]
+    #[task(shared = [usb_dev])]
     async fn UsbConfigManager(mut ctx: UsbConfigManager::Context) {
-        let mut buff = [0u8; 8];
-        let (cfg, flash) = (ctx.local.cfg, ctx.local.flash);
         log::info!("UsbConfigManager task spawned. Polling USB device.");
+        ctx.shared.usb_dev.lock(|dev| dev.programmer.info());
 
         loop {
             ctx.shared.usb_dev.lock(|dev| {
                 dev.poll();
-
-                match dev.serial.read(&mut buff) {
-                    Ok(amount) => if amount > 0 {
-                        log::info!("DEBUG SERIAL: {:?}", buff);
-                    },
-                    Err(usb_err) => match usb_err {
-                        // Checking if device is properly initialized at that point.
-                        UsbError::WouldBlock => {
-                            match dev.dev.state() {
-                                UsbDeviceState::Configured => dev.init_poll(),
-                                _ => (),
-                            }
-                        },
-                        _ => panic!("{:?}", usb_err),
-                    }
-                }
+                dev.programmer.program();
             });
+            /* TODO! spawn this task only when drum is in idle state. */
+            Systick::delay(1000.millis()).await;
         }
     }
 
@@ -242,10 +251,6 @@ mod app {
     // TODO! Perform a better panic restart procedure.
     panic_custom::define_panic!(|info| {
         log::error!("System panic occured: {}", info);
-
-        // Halting on debug builds.
-        /* #[cfg(not(debug_assertions))]
-        cortex_m::peripheral::SCB::sys_reset();  */
     });
 
     const ARM_SYSTICK_HZ: u32 = 72_000_000;
