@@ -18,19 +18,12 @@ const RIGHT_KAT_PIEZO: u8 = 6;
 pub(crate) const PIEZO_SENSOR_QUEUE_CAPACITY: usize = 32;
 /// Type alias for 32-bit analog value from ADC.
 ///
-/// Sensor handler samples central and edge sensors simultaneously in one such value.
-#[repr(C, packed)]
+/// Sensor handler samples central and edge sensors simultaneously in one such value. Samples are
+/// written in the following order:
+/// - LK, LD, RD, RK;
+#[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PiezoSample {
-    pub le: u16, pub lc: u16,
-    pub rc: u16, pub re: u16,
-}
-
-impl PiezoSample {
-    pub(crate) fn max(&self) -> u16 {
-        self.le.max(self.re.max(self.lc.max(self.rc)))
-    }
-}
+pub(crate) struct PiezoSample(pub [u16; 4]);
 
 /// Defines sampling mode for [`PiezoSensorHandler`].
 ///
@@ -181,6 +174,7 @@ impl PiezoSensorHandler {
         adcs.1.cr2.modify(|_, w| w.adon().set_bit());
 
         tim.psc.write(|w| w.psc().bits(0));                    /* Prescaler value for timer.            */
+        tim.arr.write(|w| w.arr().bits(3599));                 /* 72 Mhz / (3599 + 1) = 20 kHz clock    */
         tim.ccmr1_output().modify(|_, w| w.oc1m().frozen());   /* Don't generate PWM signal on channel  */
         tim.cr1.modify(|_, w| w.opm().clear_bit());            /* Continuous mode.                      */
         tim.cr2.modify(|_, w| w.mms().update());               /* Generate TRGO when hitting CC         */
@@ -237,12 +231,12 @@ impl PiezoSensorHandler {
 
     /// Reads ADC conversion result from all sensors.
     fn read(&self) -> PiezoSample {
-        PiezoSample {
-            le: self.adcs.0.jdr1().read().jdata().bits(),
-            lc: self.adcs.0.jdr2().read().jdata().bits(),
-            re: self.adcs.1.jdr1().read().jdata().bits(),
-            rc: self.adcs.1.jdr2().read().jdata().bits(),
-        }
+        PiezoSample([
+            self.adcs.0.jdr1().read().jdata().bits(),
+            self.adcs.0.jdr2().read().jdata().bits(),
+            self.adcs.1.jdr1().read().jdata().bits(),
+            self.adcs.1.jdr2().read().jdata().bits(),
+        ])
     }
 
     fn __set_pssm_halt(&mut self) {

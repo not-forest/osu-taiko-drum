@@ -94,7 +94,7 @@ mod app {
 
         /* Tasks */ 
         UsbConfigManager::spawn().expect("First vendor HID task initialization.");
-/*         Parser::spawn(r).expect("First parser initialization."); */
+        Parser::spawn(r).expect("First parser initialization.");
 
         /* Setting SYSCLK source to PLL (72 MHz on this line.) */
         let (rcc, flash) = (&mut dev.RCC, &mut dev.FLASH);
@@ -154,12 +154,10 @@ mod app {
 
         /* Handling samples obtained from the piezoelectric sensor */
         while let Ok(sample) = r.recv().await {
-            log::info!("SAMPLE_le: {}", sample.le);
-            if let Some(new_state) = parser.parse(sample) {
-                UsbHidSender::spawn(new_state).unwrap();
-            }
+/*             parser.parse(sample).map(|new_state| UsbHidSender::spawn(new_state).unwrap()); */
+            parser.parse(sample).map(|new_state| log::info!("STATE: {:#?}", new_state));
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
-            Systick::delay(10.millis()).await;
+            Systick::delay(1.millis()).await;
         }
     }
 
