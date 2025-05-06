@@ -126,7 +126,7 @@ impl<'a> UsbTaikoDrum<'a> {
     pub(crate) fn init_poll(&mut self) {
         // Locking on polling until device will be fully configured.
         if self.dev.state() == UsbDeviceState::Default {
-            cortex_m::interrupt::free(|_| {
+            rtic::export::interrupt::free(|_| {
                 while self.dev.state() != UsbDeviceState::Addressed { self.poll() }
                 log::info!("USB device obtained it's address.");
                 while self.dev.state() != UsbDeviceState::Configured { self.poll() }
