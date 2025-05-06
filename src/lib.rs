@@ -160,7 +160,9 @@ mod app {
 
         /* Handling samples obtained from the piezoelectric sensor */
         while let Ok(sample) = r.recv().await {
-            parser.parse(cfg, sample).map(|report| UsbHidSender::spawn(&report).unwrap());
+            parser.parse(cfg, sample).map(|report|
+                UsbHidSender::spawn(&report).expect("Higher priority task spawn condition.")
+            );
 
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
             Systick::delay(1.millis()).await;
@@ -187,18 +189,15 @@ mod app {
     #[task(priority = 1, shared = [usb_dev])]
     async fn UsbHidSender(mut ctx: UsbHidSender::Context, report: &DrumHitStrokeHidReport) {
         ctx.shared.usb_dev.lock(|dev| {
+           
             dev.poll();
-            
             match dev.hid_keyboard.push_input(report) {
-                Ok(report_length) => log::info!("Bytes send: {}", report_length),
+                Ok(report_length) => {
+                    log::info!("Bytes send: {}", report_length);
+                },
                 Err(usb_err) => match usb_err {
                     // Checking if device is properly initialized at that point.
-                    UsbError::WouldBlock => {
-                        match dev.dev.state() {
-                            UsbDeviceState::Configured => dev.init_poll(),
-                            _ => (),
-                        }
-                    },
+                    UsbError::WouldBlock => dev.init_poll(),
                     UsbError::Unsupported => (),
                     _ => panic!("{:?}", usb_err),
                 }
@@ -214,14 +213,14 @@ mod app {
     ///
     /// The underlying sensor handling structure is queuing next injected sample from the ADC pin
     /// to the [`super::app::UsbHidSender`] task.
-    #[task(binds = ADC1_2, priority = 3, local = [piezo_handler])]
+    #[task(binds = ADC1_2, priority = 2, local = [piezo_handler])]
     fn SensorHandling(ctx: SensorHandling::Context) {
         log::debug!("Updating sensors data.");
         ctx.local.piezo_handler.send();
     }
 
     /// USB TX Polling.
-    #[task(binds = USB_HP_CAN_TX, priority = 1, shared = [usb_dev])]
+    #[task(binds = USB_HP_CAN_TX, priority = 3, shared = [usb_dev])]
     fn UsbPollTx(mut ctx: UsbPollTx::Context) {
         log::debug!("USB_EVENT_Tx");
         ctx.shared.usb_dev.lock(|dev| {
@@ -230,7 +229,7 @@ mod app {
     }
 
     /// USB RX Polling.
-    #[task(binds = USB_LP_CAN_RX0, priority = 1, shared = [usb_dev])]
+    #[task(binds = USB_LP_CAN_RX0, priority = 3, shared = [usb_dev])]
     fn UsbPollRx(mut ctx: UsbPollRx::Context) {
         log::debug!("USB_EVENT_Rx");
         ctx.shared.usb_dev.lock(|dev| {

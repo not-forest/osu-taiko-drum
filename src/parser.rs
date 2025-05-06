@@ -1,6 +1,8 @@
 //! Logical structure that performs complete analysis on the upcoming samples from the
 //! piezoelectric sensors and pushes further information about true and spurious hits.
 
+use core::u32;
+
 use crate::{
     cfg::{DrumConfig, HitMapping}, 
     hid::DrumHitStrokeHidReport, 
@@ -13,14 +15,14 @@ const MID_RANGE: u16 = 4096 / 2;
 pub struct Parser { 
     /// Window counter. Will reset after reaching [`SHARPNESS`]
     window_cnt: u16,
+
     /// Buffered energy for each individual channel.
-    energy: [u32; 4],
-
+    energies: [u32; 4],
     /// History of last energy values in previous [`SHARPNESS`] windows with an index value. 
-    histogram: EnergyHistogram<8>,
-
+    histograms: [EnergyHistogram<16>; 4],
     /// Four booleans representing the current state of four hit spots.
-    hits: [bool; 4],
+    states: [bool; 4],
+
     /// Becomes true when the state of at least one sensor is changed.
     state_change: bool,
 }
@@ -29,11 +31,11 @@ impl Default for Parser {
     fn default() -> Self {
         Self {
             window_cnt: 0,
-            energy: [0u32; 4],
-            hits: [false; 4],
-            state_change: true,
+            state_change: false,
+            energies: [0u32; 4],
+            states: [false; 4],
             // MAX values are used to not spam keystrokes during startup.
-            histogram: EnergyHistogram::new(u32::MAX),
+            histograms: [EnergyHistogram::new(u32::MAX); 4],
         }
     }
 }
@@ -45,10 +47,12 @@ impl Parser {
         cfg: &DrumConfig, 
         sample: PiezoSample
     ) -> Option<DrumHitStrokeHidReport> {
+        let (sha, sens) = (cfg.parse_cfg.sharpness, cfg.parse_cfg.sensitivity);
+
         self.window_cnt += 1;
 
         // Energy buffering.
-        self.energy.iter_mut().zip(sample.0)
+        self.energies.iter_mut().zip(sample.0)
             .for_each(|(e, s)|
                 *e = e.saturating_add(
                     (s as i32).saturating_sub(MID_RANGE as i32)
@@ -56,31 +60,29 @@ impl Parser {
                 )
             );
 
-        // Deducing which sensors was hit based on buffered energy.
-        if self.window_cnt == cfg.parse_cfg.sharpness {
-            let thresh = self.histogram.threshold() + cfg.parse_cfg.sensitivity;
-
-            // Storing new energy average.
-/*             self.histogram.store(self.energy.iter().max().expect("Would never be None").clone()); */
-
-            /* self.hits.iter_mut().zip(self.energy)
-                .for_each(|(b, e)| {
+        if self.window_cnt == sha {
+            // Deducing which sensors was hit based on buffered energy on each individual channel.
+            log::info!("SEPARATOR::::::::::");
+            self.states.iter_mut()
+                .zip(self.energies)
+                .zip(&mut self.histograms)
+                .map(|((a, b), c)| (a, b, c))
+                .for_each(|(s, e, h)| {
+                    let thresh = h.threshold() + sens;
+                    let new_state = e > thresh;
                     log::info!("ENERGY: {} AND THRESH: {}", e, thresh);
-                    *b = e > thresh;
-                    if *b { self.state_change = true }
-                }); */
-/*             log::info!("ENERGY: {} AND THRESH: {}", self.energy[0], thresh); */
-            let new_state = self.energy[0] > thresh;
-            if self.hits[0] != new_state {
-                self.hits[0] = new_state;
-                self.state_change = true 
-            }
-         
-            self.histogram.store(self.energy[0]);
+
+                    if *s != new_state {
+                        *s = new_state;
+                        self.state_change = true;
+                    }
+                    
+                    h.store(e)
+
+                });
 
             self.window_cnt = 0;
-            self.energy = [0u32; 4];
-            
+            self.energies = [0u32; 4]; 
         }
 
         if self.state_change {
@@ -95,13 +97,12 @@ impl Parser {
     fn current(&self, hit_mapping: HitMapping) -> DrumHitStrokeHidReport {
         DrumHitStrokeHidReport::new(
             cortex_m::interrupt::free(|_| {
-                [
-                    (self.hits[0], hit_mapping.left_kat),
-                    (self.hits[1], hit_mapping.left_don),
-                    (self.hits[2], hit_mapping.right_don),
-                    (self.hits[3], hit_mapping.right_kat),
-                ]
-                .into_iter()
+                self.states.into_iter().zip([
+                    hit_mapping.left_kat,
+                    hit_mapping.left_don,
+                    hit_mapping.right_don,
+                    hit_mapping.right_kat,
+                ])
                 .filter_map(|(hit, key)| if hit { Some(key) } else { None })
             }),
         )
@@ -133,7 +134,7 @@ impl<const N: usize> EnergyHistogram<N> {
         let old = self.fifo[self.index_fifo];
 
         // Remove old value from `sorted` by finding it and shifting the rest.
-        if let Ok(i) = self.sorted[..N - 1].binary_search(&old) {
+        if let Ok(i) = self.sorted.binary_search(&old) {
             if i < N - 1 {
                 self.sorted[i..].rotate_left(1);
             }
@@ -142,7 +143,7 @@ impl<const N: usize> EnergyHistogram<N> {
             debug_assert!(false, "Old value not found in sorted array");
         }
 
-        match self.sorted[..N - 1].binary_search(&new) {
+        match self.sorted.binary_search(&new) {
             Ok(i) | Err(i) => {
                 if i < N - 1 {
                     self.sorted[i..N - 1].rotate_right(1);
@@ -154,7 +155,7 @@ impl<const N: usize> EnergyHistogram<N> {
         }
 
         self.fifo[self.index_fifo] = new;
-        self.index_fifo = (self.index_fifo + 1) % N;
+        self.index_fifo = (self.index_fifo + 1) & (N - 1);
 
         debug_assert!(self.sorted.is_sorted(), "Sorted array must stay sorted during the whole life of a program.");
     }
