@@ -1,23 +1,13 @@
 //! Logical structure that performs complete analysis on the upcoming samples from the
 //! piezoelectric sensors and pushes further information about true and spurious hits.
 
-
-use core::u32;
-
 use crate::{
-    cfg::HitMapping, 
+    cfg::{DrumConfig, HitMapping}, 
     hid::DrumHitStrokeHidReport, 
     piezo::PiezoSample,
 };
 
 const MID_RANGE: u16 = 4096 / 2;
-
-/// Additional margin above the dynamic threshold. The lower the value, the some sensitive drum
-/// will become. Small values would lead to spurious hits from the noise.
-const SENSITIVITY: u32 = 100_000;
-/// Sharpness defines a size of sliding window. It shall not be too small so that proper hits can
-/// be detected, but not too big, because it will cause a huge input lag.
-const SHARPNESS: u16 = 32; 
 
 #[derive(Debug)]
 pub struct Parser { 
@@ -27,7 +17,7 @@ pub struct Parser {
     energy: [u32; 4],
 
     /// History of last energy values in previous [`SHARPNESS`] windows with an index value. 
-    histogram: EnergyHistogram<1>,
+    histogram: EnergyHistogram<8>,
 
     /// Four booleans representing the current state of four hit spots.
     hits: [bool; 4],
@@ -50,8 +40,11 @@ impl Default for Parser {
 
 impl Parser {
     /// Parses upcoming samples and returns a boolean according to the curreent change of state.
-    pub(crate) fn parse(&mut self, sample: PiezoSample) -> bool {
-        self.state_change = false;
+    pub(crate) fn parse(
+        &mut self, 
+        cfg: &DrumConfig, 
+        sample: PiezoSample
+    ) -> Option<DrumHitStrokeHidReport> {
         self.window_cnt += 1;
 
         // Energy buffering.
@@ -64,8 +57,8 @@ impl Parser {
             );
 
         // Deducing which sensors was hit based on buffered energy.
-        if self.window_cnt == SHARPNESS {
-            let thresh = self.histogram.threshold();
+        if self.window_cnt == cfg.parse_cfg.sharpness {
+            let thresh = self.histogram.threshold() + cfg.parse_cfg.sensitivity;
 
             // Storing new energy average.
 /*             self.histogram.store(self.energy.iter().max().expect("Would never be None").clone()); */
@@ -76,21 +69,30 @@ impl Parser {
                     *b = e > thresh;
                     if *b { self.state_change = true }
                 }); */
-            log::info!("ENERGY: {} AND THRESH: {}", self.energy[0], thresh);
-            self.hits[0] = self.energy[0] > thresh;
-            if self.hits[0] { self.state_change = true }
+/*             log::info!("ENERGY: {} AND THRESH: {}", self.energy[0], thresh); */
+            let new_state = self.energy[0] > thresh;
+            if self.hits[0] != new_state {
+                self.hits[0] = new_state;
+                self.state_change = true 
+            }
          
             self.histogram.store(self.energy[0]);
 
             self.window_cnt = 0;
             self.energy = [0u32; 4];
+            
         }
 
-        self.state_change
+        if self.state_change {
+            self.state_change = false;
+            return Some(self.current(cfg.hit_mapping));
+        }
+
+        None
     }
 
     /// Currently pressed keys mapped into a HID report.
-    pub(crate) fn current(&self, hit_mapping: HitMapping) -> DrumHitStrokeHidReport {
+    fn current(&self, hit_mapping: HitMapping) -> DrumHitStrokeHidReport {
         DrumHitStrokeHidReport::new(
             cortex_m::interrupt::free(|_| {
                 [
@@ -157,9 +159,8 @@ impl<const N: usize> EnergyHistogram<N> {
         debug_assert!(self.sorted.is_sorted(), "Sorted array must stay sorted during the whole life of a program.");
     }
 
-    /// Threshold is equal to median of last N values with an offset between the smallest and the
-    /// largest value.
+    /// Threshold is equal to median of last N values.
     fn threshold(&self) -> u32 {
-        self.sorted[N / 2] + SENSITIVITY
+        self.sorted[N / 2]
     }
 }

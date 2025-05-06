@@ -22,13 +22,15 @@ mod prog;
 
 #[rtic::app(
     device = stm32f1::stm32f103,
-    dispatchers = [SDIO],
+    dispatchers = [SDIO, RTC],
     peripherals = true,
 )]
 mod app {
     use usb_device::{UsbError, prelude::UsbDeviceState};
     use rtic_monotonics::systick::prelude::*;
     use rtic_sync::make_channel;
+
+    use crate::hid::DrumHitStrokeHidReport;
 
     use super::cfg::DrumConfig;
     use super::piezo::{PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY, PiezoSensorHandler, Receiver};
@@ -91,10 +93,6 @@ mod app {
         log::info!("Booting taiko firmware version: [{}]", super::version::TAIKO_HID_FIRMWARE_VERSION);
 
 
-        /* Tasks */ 
-        UsbConfigManager::spawn().expect("First vendor HID task initialization.");
-        Parser::spawn(r).expect("First parser initialization.");
-
         /* Setting SYSCLK source to PLL (72 MHz on this line.) */
         let (rcc, flash) = (&mut dev.RCC, &mut dev.FLASH);
 
@@ -138,6 +136,11 @@ mod app {
         let piezo_handler = PiezoSensorHandler::new(
             (dev.ADC1, dev.ADC2), &mut dev.GPIOA, &mut dev.RCC, dev.TIM4, s.clone()
         );
+        let cfg = &usb_dev.programmer.cfg;
+
+        /* Tasks */ 
+        UsbConfigManager::spawn().expect("First vendor HID task initialization.");
+        Parser::spawn(cfg, r).expect("First parser initialization.");
 
         (
             Shared { usb_dev, gpioa: dev.GPIOA, reset_pend: false }, 
@@ -146,16 +149,18 @@ mod app {
     }
 
     /// Parses upcoming samples to detect proper hits and ignore spurious ones.
+    ///
+    /// Obtained samples are being parsed to detect a proper drum hit and it's location. Based on
+    /// the current hits, HID reports are being sent to the host machine, simulating a keyboard
+    /// device that presses the corresponding keystrokes.
     #[task(local = [parser])]
-    async fn Parser(ctx: Parser::Context, mut r: Receiver) {
+    async fn Parser(ctx: Parser::Context, cfg: &DrumConfig, mut r: Receiver) {
         let parser = ctx.local.parser;
         log::info!("Parser task spawned. Waiting for samples.");
 
         /* Handling samples obtained from the piezoelectric sensor */
         while let Ok(sample) = r.recv().await {
-            if parser.parse(sample) {
-                UsbHidSender::spawn(&parser).unwrap();
-            }
+            parser.parse(cfg, sample).map(|report| UsbHidSender::spawn(&report).unwrap());
 
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
             Systick::delay(1.millis()).await;
@@ -178,21 +183,13 @@ mod app {
         }
     }
 
-    /// Handles the USB HID connection with the host machine.
-    ///
-    /// Obtained samples are being parsed to detect a proper drum hit and it's location. Based on
-    /// the current hits, HID reports are being sent to the host machine, simulating a keyboard
-    /// device that presses the corresponding keystrokes.
-    #[task(shared = [usb_dev])]
-    async fn UsbHidSender(mut ctx: UsbHidSender::Context, parser: &P) {
-        log::info!("UsbHidSender task spawned. Polling USB device.");
-
+    /// Sends USB HID reports to the host machine.
+    #[task(priority = 1, shared = [usb_dev])]
+    async fn UsbHidSender(mut ctx: UsbHidSender::Context, report: &DrumHitStrokeHidReport) {
         ctx.shared.usb_dev.lock(|dev| {
             dev.poll();
-            // Mapping pressed keys to the related keyboard keys.
-            let report = parser.current(dev.programmer.cfg.hit_mapping);
             
-            match dev.hid_keyboard.push_input(&report) {
+            match dev.hid_keyboard.push_input(report) {
                 Ok(report_length) => log::info!("Bytes send: {}", report_length),
                 Err(usb_err) => match usb_err {
                     // Checking if device is properly initialized at that point.

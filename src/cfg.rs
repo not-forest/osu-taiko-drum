@@ -13,23 +13,15 @@ unsafe extern "C" {
     static __cfg_end: u8;
 }
 
-/// Individual hit mapping for each piezoelectric sensor.
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy)]
-pub struct HitMapping {
-    pub left_kat: KeyboardUsage,
-    pub left_don: KeyboardUsage,
-    pub right_don: KeyboardUsage,
-    pub right_kat: KeyboardUsage,
-}
-
 /// Drum configuration.
 ///
 /// This structure represents a raw set of bytes stored in the flash memory.
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DrumConfig {
     pub hit_mapping: HitMapping,
+    pub parse_cfg: SignalParsingConfiguration,
+    _reserved: u16,
 }
 
 const CFG_START: *const u8 = unsafe { &__cfg_start as *const u8 };
@@ -128,7 +120,7 @@ impl DrumConfig {
 
                     flash.cr.modify(|_, w| w.per().clear_bit());
 
-                    log::info!("Writing: {:X} -> {:x}", ptr as u32, word);
+                    log::info!("Writing: 0x{:x} -> 0x{:X}", ptr as u32, word);
                     Self::__bsy(flash, |f| {
                         f.cr.modify(|_, w| w.pg().set_bit());
                         ptr::write_volatile(ptr, word);
@@ -138,6 +130,37 @@ impl DrumConfig {
                 });
         } else {
             log::error!("Unable to erase flash memory page.");
+        }
+    }
+}
+
+/// Individual hit mapping for each piezoelectric sensor.
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
+pub struct HitMapping {
+    pub left_kat: KeyboardUsage,
+    pub left_don: KeyboardUsage,
+    pub right_don: KeyboardUsage,
+    pub right_kat: KeyboardUsage,
+}
+
+/// Signal processing related configuration.
+#[repr(C, align(4))]
+#[derive(Debug, Clone, Copy)]
+pub struct SignalParsingConfiguration {
+    /// Additional margin above the dynamic threshold. The lower the value, the some sensitive drum
+    /// will become. Small values would lead to spurious hits from the noise.
+    pub sensitivity: u32,
+    /// Sharpness defines a size of sliding window. It shall not be too small so that proper hits can
+    /// be detected, but not too big, because it will cause a huge input lag.
+    pub sharpness: u16, 
+}
+
+impl Default for SignalParsingConfiguration {
+    fn default() -> Self {
+        Self {
+            sensitivity: 100_000u32,
+            sharpness: 32u16,
         }
     }
 }
