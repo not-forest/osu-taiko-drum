@@ -33,7 +33,6 @@ mod app {
     use super::cfg::DrumConfig;
     use super::piezo::{PiezoSample, PIEZO_SENSOR_QUEUE_CAPACITY, PiezoSensorHandler, Receiver};
     use super::usb::{UsbTaikoDrum, UsbAllocator, UsbBus};
-    use super::hid::DrumHitStrokeHidReport;
     use super::parser::Parser as P;
     use super::prog::Programmer;
 
@@ -154,8 +153,10 @@ mod app {
 
         /* Handling samples obtained from the piezoelectric sensor */
         while let Ok(sample) = r.recv().await {
-/*             parser.parse(sample).map(|new_state| UsbHidSender::spawn(new_state).unwrap()); */
-            parser.parse(sample).map(|new_state| log::info!("STATE: {:#?}", new_state));
+            if parser.parse(sample) {
+                UsbHidSender::spawn(&parser).unwrap();
+            }
+
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
             Systick::delay(1.millis()).await;
         }
@@ -183,11 +184,13 @@ mod app {
     /// the current hits, HID reports are being sent to the host machine, simulating a keyboard
     /// device that presses the corresponding keystrokes.
     #[task(shared = [usb_dev])]
-    async fn UsbHidSender(mut ctx: UsbHidSender::Context, report: DrumHitStrokeHidReport) {
+    async fn UsbHidSender(mut ctx: UsbHidSender::Context, parser: &P) {
         log::info!("UsbHidSender task spawned. Polling USB device.");
 
         ctx.shared.usb_dev.lock(|dev| {
             dev.poll();
+            // Mapping pressed keys to the related keyboard keys.
+            let report = parser.current(dev.programmer.cfg.hit_mapping);
             
             match dev.hid_keyboard.push_input(&report) {
                 Ok(report_length) => log::info!("Bytes send: {}", report_length),

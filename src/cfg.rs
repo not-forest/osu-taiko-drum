@@ -13,16 +13,23 @@ unsafe extern "C" {
     static __cfg_end: u8;
 }
 
-/// Drum configuration.
-///
-/// This structure represents a raw set of bytes stored in the flash memory.
+/// Individual hit mapping for each piezoelectric sensor.
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
-pub struct DrumConfig {
+pub struct HitMapping {
     pub left_kat: KeyboardUsage,
     pub left_don: KeyboardUsage,
     pub right_don: KeyboardUsage,
     pub right_kat: KeyboardUsage,
+}
+
+/// Drum configuration.
+///
+/// This structure represents a raw set of bytes stored in the flash memory.
+#[repr(C, packed)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DrumConfig {
+    pub hit_mapping: HitMapping,
 }
 
 const CFG_START: *const u8 = unsafe { &__cfg_start as *const u8 };
@@ -135,7 +142,7 @@ impl DrumConfig {
     }
 }
 
-impl Default for DrumConfig {
+impl Default for HitMapping {
     fn default() -> Self {
         Self {
             left_kat: KeyboardUsage::KeyboardZz,

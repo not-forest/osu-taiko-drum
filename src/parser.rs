@@ -4,17 +4,13 @@
 
 use core::u32;
 
-use crate::{hid::DrumHitStrokeHidReport, piezo::PiezoSample};
-use usbd_hid::descriptor::KeyboardUsage;
+use crate::{
+    cfg::HitMapping, 
+    hid::DrumHitStrokeHidReport, 
+    piezo::PiezoSample,
+};
 
 const MID_RANGE: u16 = 4096 / 2;
-
-const LEFT_KAT_MAPPED_KEY: KeyboardUsage = KeyboardUsage::KeyboardZz;
-const LEFT_DON_MAPPED_KEY: KeyboardUsage = KeyboardUsage::KeyboardXx;
-const RIGHT_DON_MAPPED_KEY: KeyboardUsage = KeyboardUsage::KeyboardCc;
-const RIGHT_KAT_MAPPED_KEY: KeyboardUsage = KeyboardUsage::KeyboardVv;
-
-/* TODO! Swap all woodoo constants with user-configurable ones. */
 
 /// Additional margin above the dynamic threshold. The lower the value, the some sensitive drum
 /// will become. Small values would lead to spurious hits from the noise.
@@ -53,8 +49,11 @@ impl Default for Parser {
 }
 
 impl Parser {
-    pub(crate) fn parse(&mut self, sample: PiezoSample) -> Option<DrumHitStrokeHidReport> {
+    /// Parses upcoming samples and returns a boolean according to the curreent change of state.
+    pub(crate) fn parse(&mut self, sample: PiezoSample) -> bool {
+        self.state_change = false;
         self.window_cnt += 1;
+
         // Energy buffering.
         self.energy.iter_mut().zip(sample.0)
             .for_each(|(e, s)|
@@ -85,24 +84,20 @@ impl Parser {
 
             self.window_cnt = 0;
             self.energy = [0u32; 4];
-
-            if self.state_change {
-                self.state_change = false;
-                return Some(self.current());
-            }
         }
 
-        None
+        self.state_change
     }
 
-    pub(crate) fn current(&mut self) -> DrumHitStrokeHidReport {
+    /// Currently pressed keys mapped into a HID report.
+    pub(crate) fn current(&self, hit_mapping: HitMapping) -> DrumHitStrokeHidReport {
         DrumHitStrokeHidReport::new(
             cortex_m::interrupt::free(|_| {
                 [
-                    (self.hits[0], LEFT_KAT_MAPPED_KEY),
-                    (self.hits[1], LEFT_DON_MAPPED_KEY),
-                    (self.hits[2], RIGHT_DON_MAPPED_KEY),
-                    (self.hits[3], RIGHT_KAT_MAPPED_KEY),
+                    (self.hits[0], hit_mapping.left_kat),
+                    (self.hits[1], hit_mapping.left_don),
+                    (self.hits[2], hit_mapping.right_don),
+                    (self.hits[3], hit_mapping.right_kat),
                 ]
                 .into_iter()
                 .filter_map(|(hit, key)| if hit { Some(key) } else { None })

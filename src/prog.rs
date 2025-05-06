@@ -4,8 +4,6 @@ use usbd_hid::UsbError;
 use usbd_serial::embedded_io::{ReadReady, Write};
 use usbd_serial::SerialPort;
 
-use crate::cfg;
-
 use super::pac::FLASH;
 use super::cfg::DrumConfig;
 use super::usb::{UsbBus, UsbAllocator};
@@ -92,43 +90,48 @@ impl Programmer<'_> {
     pub(crate) fn program(&mut self) {
         let mut buff = [0u8; BUFF_LEN];
 
-        // Perform a non-blocking read.
-        if let Ok(true) = self.serial.read_ready() {
-            match self.serial.read(&mut buff) {
-                Ok(rsize) => if rsize > 0 {
-                    // Performing only properly parsed CMDs.
-                    match buff[0].try_into() {
-                        Ok(cmd) => match cmd {
-                            Command::Reset => super::app::FirmwareReset::spawn().expect("Reset function cannot be called more than once."),
-                            Command::Read => {
-                                self.ack();
-                                self.cfg.serialize(&mut buff);
-                                // Sending current configuration back.
-                                match self.serial.write(&buff) {
-                                    Ok(wsize) => log::info!("Current configuration was send [{}] bytes", wsize),
-                                    Err(err) => todo!(),
+        rtic::export::interrupt::free(|_| {
+            // Perform a non-blocking read.
+            if let Ok(true) = self.serial.read_ready() {
+                match self.serial.read(&mut buff) {
+                    Ok(rsize) => if rsize > 0 {
+                        // Performing only properly parsed CMDs.
+                        match buff[0].try_into() {
+                            Ok(cmd) => match cmd {
+                                Command::Reset => super::app::FirmwareReset::spawn().expect("Reset function cannot be called more than once."),
+                                Command::Read => {
+                                    self.ack();
+                                    self.cfg.serialize(&mut buff);
+                                    // Sending current configuration back.
+                                    match self.serial.write(&buff) {
+                                        Ok(wsize) => log::info!("Current configuration was send [{}] bytes", wsize),
+                                        Err(err) => todo!(),
+                                    }
                                 }
-                            }
-                            Command::Write => {
-                                self.ack();
-                                match DrumConfig::deserialize(&buff[1..]) {
-                                    Ok(new_cfg) => self.cfg = new_cfg,
-                                    Err(byte) => if byte != 0 { 
-                                        log::error!("Unexpected byte value obtained: {}", byte) 
-                                    },
+                                Command::Write => {
+                                    self.ack();
+                                    match DrumConfig::deserialize(&buff[1..]) {
+                                        Ok(new_cfg) => {
+                                            self.cfg = new_cfg;
+                                            self.cfg.save(&mut self.flash);
+                                        },
+                                        Err(byte) => if byte != 0 { 
+                                            log::error!("Unexpected byte value obtained: {}", byte) 
+                                        },
+                                    }
                                 }
+                                _ => (),
                             }
-                            _ => (),
+                            Err(err) => log::warn!("Unknown command byte received: {:#x}, ignoring...", err),
                         }
-                        Err(err) => log::warn!("Unknown command byte received: {:#x}, ignoring...", err),
+                    },
+                    Err(usb_err) => match usb_err {
+                        UsbError::WouldBlock | UsbError::Unsupported => (),
+                        _ => panic!("{:?}", usb_err),
                     }
-                },
-                Err(usb_err) => match usb_err {
-                    UsbError::WouldBlock | UsbError::Unsupported => (),
-                    _ => panic!("{:?}", usb_err),
                 }
             }
-        }
+        });
     }
 
     /// Sends an acknowledge signal with a small delay.
@@ -150,10 +153,10 @@ impl ProgrammerSerializer for DrumConfig {
     fn serialize(&self, buff: &mut [u8; BUFF_LEN]) {
 
         let data = [
-            LEFTKAT, self.left_kat as u8,
-            LEFTDON, self.left_don as u8,
-            RIGHTDON, self.right_don as u8,
-            RIGHTKAT, self.right_kat as u8,
+            LEFTKAT, self.hit_mapping.left_kat as u8,
+            LEFTDON, self.hit_mapping.left_don as u8,
+            RIGHTDON, self.hit_mapping.right_don as u8,
+            RIGHTKAT, self.hit_mapping.right_kat as u8,
         ];
 
         buff[..data.len()].copy_from_slice(&data);
@@ -168,10 +171,10 @@ impl ProgrammerSerializer for DrumConfig {
                 cmd @ (LEFTKAT | LEFTDON | RIGHTDON | RIGHTKAT) => 
                     if let Some(&key) = iter.next() {
                         match cmd {
-                            LEFTKAT => s.left_kat = key.into(),
-                            LEFTDON => s.left_don = key.into(),
-                            RIGHTDON => s.right_don = key.into(),
-                            RIGHTKAT => s.right_kat = key.into(),
+                            LEFTKAT => s.hit_mapping.left_kat = key.into(),
+                            LEFTDON => s.hit_mapping.left_don = key.into(),
+                            RIGHTDON => s.hit_mapping.right_don = key.into(),
+                            RIGHTKAT => s.hit_mapping.right_kat = key.into(),
                             _ => unreachable!(),
                         }
                     } else {
