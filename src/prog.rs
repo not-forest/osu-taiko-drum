@@ -1,7 +1,7 @@
 //! Runtime programmer for configuration and firmware.
 
 use usbd_hid::UsbError;
-use usbd_serial::embedded_io::{ReadReady, Write};
+use usbd_serial::embedded_io::{Read, ReadReady, Write};
 use usbd_serial::SerialPort;
 
 use super::pac::FLASH;
@@ -19,7 +19,7 @@ trait ProgrammerSerializer: Sized {
     /// Serializes a structure in a proper format for utility read.
     fn serialize(&self, buff: &mut [u8; BUFF_LEN]);
     /// Deserializes upcoming stream of bytes from the utility into a structure of corresponding type.
-    fn deserialize(buff: &[u8]) -> Result<Self, Self::Error>;
+    fn deserialize(&self, buff: &[u8]) -> Result<Self, Self::Error>;
 }
 
 #[repr(u8)]
@@ -98,7 +98,10 @@ impl Programmer<'_> {
                         // Performing only properly parsed CMDs.
                         match buff[0].try_into() {
                             Ok(cmd) => match cmd {
-                                Command::Reset => super::app::FirmwareReset::spawn().expect("Reset function cannot be called more than once."),
+                                Command::Reset => {
+                                    self.ack();
+                                    super::app::FirmwareReset::spawn().expect("Reset function cannot be called more than once.");
+                                },
                                 Command::Read => {
                                     self.ack();
                                     self.cfg.serialize(&mut buff);
@@ -107,13 +110,17 @@ impl Programmer<'_> {
                                         Ok(wsize) => log::info!("Current configuration was send [{}] bytes", wsize),
                                         Err(err) => todo!(),
                                     }
+                                    self.serial.flush().ok();
                                 }
                                 Command::Write => {
                                     self.ack();
-                                    match DrumConfig::deserialize(&buff[1..]) {
+
+                                    // Mutates current configuration based on obtained data.
+                                    match self.cfg.deserialize(&buff) {
                                         Ok(new_cfg) => {
                                             self.cfg = new_cfg;
                                             self.cfg.save(&mut self.flash);
+                                            log::info!("Writing new configuration:\n{:#?}", new_cfg);
                                         },
                                         Err(byte) => if byte != 0 { 
                                             log::error!("Unexpected byte value obtained: {}", byte) 
@@ -143,33 +150,46 @@ impl Programmer<'_> {
     }
 }
 
+/* Constant bytes are completely equal to those defined within the taiko drum control utility. */
 const LEFTKAT: u8 = 0x10;
 const LEFTDON: u8 = 0x11;
 const RIGHTDON: u8 = 0x12;
 const RIGHTKAT: u8 = 0x13; 
+const SENS: u8 = 0x20;
+const SHARP: u8 = 0x21;
 
 impl ProgrammerSerializer for DrumConfig {
     type Error = u8;
     fn serialize(&self, buff: &mut [u8; BUFF_LEN]) {
+        let hm = self.hit_mapping;
+        let pc = self.parse_cfg;
+        let s = pc.sensitivity.to_be_bytes();
+        let sh = pc.sharpness.to_be_bytes();
 
+        // Values scanned by utility are expected in big-endian format.
         let data = [
-            LEFTKAT, self.hit_mapping.left_kat as u8,
-            LEFTDON, self.hit_mapping.left_don as u8,
-            RIGHTDON, self.hit_mapping.right_don as u8,
-            RIGHTKAT, self.hit_mapping.right_kat as u8,
+            LEFTKAT,    hm.left_kat as u8,
+            RIGHTDON,   hm.right_don as u8,
+            LEFTDON,    hm.left_don as u8,
+            RIGHTKAT,   hm.right_kat as u8,
+            SENS,       s[0], s[1], s[2], s[3],
+            SHARP,      sh[0], sh[1],
         ];
 
         buff[..data.len()].copy_from_slice(&data);
     }
 
-    fn deserialize(buff: &[u8]) -> Result<Self, Self::Error> {
-        let mut iter = buff.into_iter();
-        let mut s = Self::default();
+    fn deserialize(&self, buff: &[u8]) -> Result<Self, Self::Error> {
+        let mut idx = 0;
+        let mut s = self.clone();
 
-        while let Some(&b) = iter.next() {
-            match b {
-                cmd @ (LEFTKAT | LEFTDON | RIGHTDON | RIGHTKAT) => 
-                    if let Some(&key) = iter.next() {
+        while idx < buff.len() {
+            log::info!("IDX: {}, BUFF(IDX): {}", idx, buff[idx]);
+            match buff[idx] {
+                /* One byte is expected for keyboard mapping configuration. */
+                cmd if matches!(cmd, LEFTKAT | LEFTDON | RIGHTDON | RIGHTKAT) => {
+                    idx += 1;
+                    if let Some(&key) = buff.get(idx) {
                         match cmd {
                             LEFTKAT => s.hit_mapping.left_kat = key.into(),
                             LEFTDON => s.hit_mapping.left_don = key.into(),
@@ -178,14 +198,36 @@ impl ProgrammerSerializer for DrumConfig {
                             _ => unreachable!(),
                         }
                     } else {
-                        log::error!("Desserialization error: Unexpected end of stream withi the configuration command.");
+                        log::error!("Desserialization error: Unexpected end of stream within the configuration command.");
                         return Err(0);
-                    },
-                _ => {
+                    } 
+                }, 
+                /* Four bytes is expected for sensitivity configuration. */
+                SENS => {
+                    if buff.get(idx+4).is_some() {
+                        s.parse_cfg.sensitivity = u32::from_be_bytes(buff[idx..idx+4].try_into().unwrap());
+                    } else {
+                        log::error!("Desserialization error: Unexpected end of stream within the configuration command.");
+                        return Err(0);
+                    }
+                    idx += 4;
+                },
+                /* Two bytes are expected for sharpness configuration. */
+                SHARP => {
+                    if buff.get(idx+2).is_some() {
+                        s.parse_cfg.sensitivity = u32::from_be_bytes(buff[idx..idx+2].try_into().unwrap());
+                    } else {
+                        log::error!("Desserialization error: Unexpected end of stream within the configuration command.");
+                        return Err(0);
+                    }
+                    idx += 2;
+                },
+                bad @ _ => {
                     log::error!("Deserialization error: Unable to properly parse upcoming configuration byte-stream from the utility software.");
-                    return Err(b);
+                    return Err(bad);
                 }
             }
+            idx += 1;
         }
 
         Ok(s)

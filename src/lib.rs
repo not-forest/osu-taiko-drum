@@ -26,7 +26,7 @@ mod prog;
     peripherals = true,
 )]
 mod app {
-    use usb_device::{UsbError, prelude::UsbDeviceState};
+    use usb_device::UsbError;
     use rtic_monotonics::systick::prelude::*;
     use rtic_sync::make_channel;
 
@@ -139,7 +139,6 @@ mod app {
         let cfg = &usb_dev.programmer.cfg;
 
         /* Tasks */ 
-        UsbConfigManager::spawn().expect("First vendor HID task initialization.");
         Parser::spawn(cfg, r).expect("First parser initialization.");
 
         (
@@ -166,22 +165,6 @@ mod app {
 
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
             Systick::delay(1.millis()).await;
-        }
-    }
-
-    /// Task for listening on upcoming configuration data from the host machine.
-    #[task(shared = [usb_dev])]
-    async fn UsbConfigManager(mut ctx: UsbConfigManager::Context) {
-        log::info!("UsbConfigManager task spawned. Polling USB device.");
-        ctx.shared.usb_dev.lock(|dev| dev.programmer.info());
-
-        loop {
-            ctx.shared.usb_dev.lock(|dev| {
-                dev.poll();
-                dev.programmer.program();
-            });
-            /* TODO! spawn this task only when drum is in idle state. */
-            Systick::delay(1000.millis()).await;
         }
     }
 
@@ -215,12 +198,11 @@ mod app {
     /// to the [`super::app::UsbHidSender`] task.
     #[task(binds = ADC1_2, priority = 2, local = [piezo_handler])]
     fn SensorHandling(ctx: SensorHandling::Context) {
-        log::debug!("Updating sensors data.");
         ctx.local.piezo_handler.send();
     }
 
     /// USB TX Polling.
-    #[task(binds = USB_HP_CAN_TX, priority = 3, shared = [usb_dev])]
+    #[task(binds = USB_HP_CAN_TX, priority = 2, shared = [usb_dev])]
     fn UsbPollTx(mut ctx: UsbPollTx::Context) {
         log::debug!("USB_EVENT_Tx");
         ctx.shared.usb_dev.lock(|dev| {
@@ -229,7 +211,7 @@ mod app {
     }
 
     /// USB RX Polling.
-    #[task(binds = USB_LP_CAN_RX0, priority = 3, shared = [usb_dev])]
+    #[task(binds = USB_LP_CAN_RX0, priority = 2, shared = [usb_dev])]
     fn UsbPollRx(mut ctx: UsbPollRx::Context) {
         log::debug!("USB_EVENT_Rx");
         ctx.shared.usb_dev.lock(|dev| {
@@ -240,6 +222,7 @@ mod app {
 
     fn __usb_poll(dev: &mut UsbTaikoDrum) {
         dev.poll();
+        dev.programmer.program();
     }
 
     // Panic handler.
