@@ -2,6 +2,10 @@
 ###
 ### Taiko Drum Controller configuration utility.
 ###
+### Communicates with drum's firmware via USB serial interface by sending raw commands, which are afterwards parsed 
+### by the microcontroller. This utility does not checks the endpoint device for proper VID,PID values, therefore
+### higher level software is required to find a proper file created by the OS (e.g. ttyACM0, COM1, etc.) while enumerating 
+### the USB device.
 
 set version "0.1.0"
 array set config {}
@@ -101,7 +105,7 @@ while {$i < [llength $argv]} {
             # Parses the configuration string into an array
             if {[string length $val] > 0} {
                 set cmd write
-                set keys "left_kat right_kat left_don right_don"
+                set keys "left_kat right_kat left_don right_don sens sharp"
                 foreach pair [split $val " "] {
                     set split_pair [split $pair "="]
                     set key [lindex $split_pair 0]
@@ -142,6 +146,9 @@ array set key_to_cmd {
     left_don  0x11
     right_don 0x12
     right_kat 0x13
+
+    sens      0x20
+    sharp     0x21
 }
 
 # Opens and configures the requested serial port.
@@ -186,6 +193,14 @@ proc wait_for {serial expected_byte timeout} {
 
 proc byte {val} { binary format c $val }
 
+# Waiting for ACK from the microcontroller's side with timeout of 5 seconds.
+proc until_ack {conn ack timeout} {
+    if {![wait_for $conn $ack $timeout]} {
+        puts stderr "Did not receive ACK from device (timeout)."
+        exit 1
+    }
+}
+
 # Main
 
 set conn [serial $port]
@@ -195,27 +210,21 @@ if {$cmd eq "read"} {
     puts -nonewline $conn [byte $CMD_READ]
     flush $conn
 
-    # Waiting for ACK from the microcontroller's side with timeout of 5 seconds.
-    if {![wait_for $conn $ACK $timeout]} {
-        puts stderr "Did not receive ACK from device (timeout)."
-        exit 1
-    }
+    until_ack $conn $ACK $timeout
 
     # Read each configuration entry: 2 bytes per item
     set received_config ""
-    while {[eof $conn] == 0} {
+    while {[eof $conn] eq 0} {
         set cmd_byte [read $conn 1]
-        set val_byte [read $conn 1]
 
-        if {[string length $cmd_byte] < 1 || [string length $val_byte] < 1} {
+        if {[string length $cmd_byte] < 1} {
             break
         }
-
         binary scan $cmd_byte c cmd_id
-        binary scan $val_byte c val_ascii
 
         # Backward keyname unparsing.
         set key "UNKNOWN"
+        set raw_value 0xFF
         foreach k [array names key_to_cmd] {
             if {$key_to_cmd($k) == $cmd_id} {
                 set key $k
@@ -223,7 +232,22 @@ if {$cmd eq "read"} {
             }
         }
 
-        append received_config "$key=[format %c $val_ascii] "
+        switch $key {
+            "sens" {
+                set raw_value [read $conn 4]
+                binary scan $raw_value I val
+            }
+            "sharp" {
+                set raw_value [read $conn 2]
+                binary scan $raw_value S val
+            }
+            default {
+                set raw_value [read $conn 1]
+                binary scan $raw_value cu val
+            }
+        }
+
+        append received_config "$key=[format %u $val] "
     }
 
     puts "Received: $received_config"
@@ -232,31 +256,44 @@ if {$cmd eq "read"} {
     set len 0
     puts -nonewline $conn [byte $CMD_WRITE]
     flush $conn
+    until_ack $conn $ACK $timeout 
 
-    # Waiting for ACK from the microcontroller's side with timeout of 5 seconds.
-    if {![wait_for $conn $ACK $timeout]} {
-        puts stderr "Did not receive ACK from device (timeout)."
-        exit 1
-    }
-
-    # Sends all configuration values in two-byte pairs.
     foreach key [array names config] {
         if {![info exists key_to_cmd($key)]} {
             puts stderr "Unknown config key: $key"
-            continue
+            exit 1 
+        }
+    }
+
+    set msg ""
+    # Sends all configuration values in key-value pairs.
+    foreach key [array names config] {
+        set cmd_byte [byte $key_to_cmd($key)]
+        set value $config($key)
+
+        switch $key {
+            "sens" {
+                set val_bytes [binary format I $value]
+                incr len 5
+            }
+            "sharp" {
+                set val_bytes [binary format S $value]
+                incr len 3
+            }
+            default {
+                set val_bytes [binary format c $value]
+                incr len 2
+            }
         }
 
-        set cmd_byte [byte $key_to_cmd($key)]
-        set val_byte [byte [scan $config($key) %c]]
-
-        puts -nonewline $conn "${cmd_byte}${val_byte}"
-        
-        incr len 2
-    }
+        append msg "${cmd_byte}${val_bytes}"
+    } 
+    puts -nonewline $conn msg
     flush $conn
 
     puts "Configuration of ${len} bytes is sent."
 } elseif {$cmd eq "reset"} {
     puts -nonewline $conn [byte $CMD_RESET]
     flush $conn
+    until_ack $conn $ACK $timeout
 }
