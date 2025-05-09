@@ -1,5 +1,5 @@
 
-(footprint SOT230P700X180-4N (layer F.Cu) (tedit 67F1A4DF)
+(footprint SOT230P700X180-4N (layer F.Cu) (tedit 681BD1C6)
   (descr "")
   (attr smd)
   (fp_text reference REF** (at -0.025 -4.754 0) (layer F.SilkS)
