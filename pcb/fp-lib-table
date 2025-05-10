@@ -1,0 +1,5 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "FSM8JH")(type "KiCad")(uri "${KIPRJMOD}/syms/FSM8JH")(options "")(descr ""))
+  (lib (name "LM3940IMPX-3.3_NOPB")(type "KiCad")(uri "${KIPRJMOD}/syms/LM3940IMPX-3.3_NOPB")(options "")(descr ""))
+)

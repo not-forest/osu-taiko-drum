@@ -1787,7 +1787,7 @@
 			)
 			(embedded_fonts no)
 		)
-		(symbol "LM3940IMPX-3.3_NOPB:LM3940IMPX-3.3_NOPB"
+		(symbol "LM3940IMPX-3.3_NOPB_1"
 			(pin_names
 				(offset 1.016)
 			)
@@ -1920,7 +1920,7 @@
 					(hide yes)
 				)
 			)
-			(symbol "LM3940IMPX-3.3_NOPB_0_0"
+			(symbol "LM3940IMPX-3.3_NOPB_1_0_0"
 				(rectangle
 					(start -12.7 -5.08)
 					(end 12.7 5.08)
@@ -3168,23 +3168,25 @@
 			(exclude_from_sim no)
 			(in_bom yes)
 			(on_board yes)
-			(property "Reference" "SW"
-				(at 0 3.175 0)
+			(property "Reference" "RESET1"
+				(at -1.2701 2.54 90)
 				(effects
 					(font
 						(size 1.27 1.27)
 					)
+					(justify left)
 				)
 			)
 			(property "Value" "SW_SPST"
-				(at 0 -2.54 0)
+				(at 1.2699 2.54 90)
 				(effects
 					(font
 						(size 1.27 1.27)
 					)
+					(justify left)
 				)
 			)
-			(property "Footprint" ""
+			(property "Footprint" "FSM8JH:SW_FSM8JH"
 				(at 0 0 0)
 				(effects
 					(font
@@ -3276,7 +3278,7 @@
 					)
 				)
 				(pin passive line
-					(at 5.08 0 180)
+					(at -5.08 0 0)
 					(length 2.54)
 					(name "B"
 						(effects
@@ -3286,6 +3288,42 @@
 						)
 					)
 					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 5.08 0 180)
+					(length 2.54)
+					(name "A"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "3"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 5.08 0 180)
+					(length 2.54)
+					(name "B"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "4"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3847,12 +3885,6 @@
 		(uuid "11548a3d-2ee3-4c76-856f-3a49b1fb3405")
 	)
 	(junction
-		(at 35.56 43.18)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "123fb8c9-6246-40ec-9726-e26457b62ea8")
-	)
-	(junction
 		(at 167.64 113.03)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -3863,6 +3895,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "34f7199b-8bb2-4ca9-a453-2b25ce453958")
+	)
+	(junction
+		(at 35.56 43.18)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "4d5f3de9-5eea-471f-ab22-7ef9f5a1e8d3")
 	)
 	(junction
 		(at 180.34 113.03)
@@ -4340,16 +4378,6 @@
 	)
 	(wire
 		(pts
-			(xy 120.65 44.45) (xy 121.92 44.45)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "34178b2c-7ce5-4800-b303-14ef5b85d474")
-	)
-	(wire
-		(pts
 			(xy 229.87 50.8) (xy 234.95 50.8)
 		)
 		(stroke
@@ -4707,6 +4735,16 @@
 			(type default)
 		)
 		(uuid "817953b3-1b47-49e3-8ff0-fa2ca7f7fa49")
+	)
+	(wire
+		(pts
+			(xy 121.92 44.45) (xy 120.65 44.45)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "85814aa4-45b7-4687-91cb-52a03771faab")
 	)
 	(wire
 		(pts
@@ -5367,6 +5405,26 @@
 			(type default)
 		)
 		(uuid "f52e8c59-a848-426d-a79d-222602c17e75")
+	)
+	(label "D+"
+		(at 121.92 44.45 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "039004cc-c149-4763-af1c-e4c20b2cd01f")
+	)
+	(label "D-"
+		(at 121.92 46.99 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "986728e9-6835-4f48-87d1-4f01c615b6f1")
 	)
 	(global_label "SWDIO"
 		(shape input)
@@ -6848,7 +6906,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder"
+		(property "Footprint" "Capacitor_THT:C_Radial_D5.0mm_H5.0mm_P2.00mm"
 			(at 77.1652 52.07 0)
 			(effects
 				(font
@@ -8037,6 +8095,7 @@
 		)
 	)
 	(symbol
+		(lib_name "LM3940IMPX-3.3_NOPB_1")
 		(lib_id "LM3940IMPX-3.3_NOPB:LM3940IMPX-3.3_NOPB")
 		(at 53.34 45.72 0)
 		(unit 1)
@@ -8045,8 +8104,8 @@
 		(on_board yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "88c058a8-4252-4fe6-a5b1-feb135b69c56")
-		(property "Reference" "U2"
+		(uuid "8ab82294-5c0d-4216-b61b-3a5aa566d157")
+		(property "Reference" "U4"
 			(at 53.34 35.56 0)
 			(effects
 				(font
@@ -8170,22 +8229,22 @@
 				(hide yes)
 			)
 		)
-		(pin "1"
-			(uuid "1677b80e-2a49-40f3-b34c-aef9507d185c")
-		)
 		(pin "2"
-			(uuid "28f34a81-6ebe-479c-b61b-7905ec151c06")
+			(uuid "3669245d-4e3e-49f7-b34c-d2c6db16b6b1")
 		)
 		(pin "3"
-			(uuid "8d587fc0-de76-4fc7-87c5-d4b8f7a1f992")
+			(uuid "10afdd0b-f494-4b74-815f-a5bc02d865ef")
+		)
+		(pin "1"
+			(uuid "bd9f889a-3ad1-4ad2-a1cd-f8c9b1853e40")
 		)
 		(pin "4"
-			(uuid "f3477e41-40c1-4215-8aeb-38f22b667101")
+			(uuid "0d448d3f-3e68-487a-b7a2-6ee256f33ad3")
 		)
 		(instances
 			(project ""
 				(path "/ee4ada02-05a0-4e49-92f9-f61a706c8588"
-					(reference "U2")
+					(reference "U4")
 					(unit 1)
 				)
 			)
@@ -8706,7 +8765,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder"
+		(property "Footprint" "Capacitor_THT:C_Radial_D5.0mm_H5.0mm_P2.00mm"
 			(at 34.5948 53.34 0)
 			(effects
 				(font
@@ -9107,7 +9166,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder"
+		(property "Footprint" "Capacitor_THT:C_Radial_D5.0mm_H5.0mm_P2.00mm"
 			(at 119.0752 105.41 0)
 			(effects
 				(font
@@ -9860,7 +9919,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" ""
+		(property "Footprint" "FSM8JH:SW_FSM8JH"
 			(at 219.71 100.33 0)
 			(effects
 				(font
@@ -9892,6 +9951,12 @@
 		)
 		(pin "2"
 			(uuid "f9c51b29-4118-4aeb-824f-7b9ba4940273")
+		)
+		(pin "4"
+			(uuid "06148a6b-824a-4e73-acbd-8f483bbf5cf6")
+		)
+		(pin "3"
+			(uuid "d98a446e-8818-4144-a5d5-017862cc7686")
 		)
 		(instances
 			(project ""

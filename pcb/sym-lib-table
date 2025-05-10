@@ -1,0 +1,5 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "LM3940IMPX-3.3_NOPB")(type "KiCad")(uri "${KIPRJMOD}/syms/LM3940IMPX-3.3_NOPB/LM3940IMPX-3.3_NOPB.kicad_sym")(options "")(descr ""))
+  (lib (name "FSM8JH")(type "KiCad")(uri "${KIPRJMOD}/syms/FSM8JH/FSM8JH.kicad_sym")(options "")(descr ""))
+)
