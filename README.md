@@ -14,13 +14,13 @@ The project includes:
 ## 📸 Visual Overview
 
 - **Assembled Physical Drum Controller**  
-  `![Assembled Physical Representation](./docs/drum-image-made.png)`
+  ![Assembled Physical Representation](./docs/drum-image-made.png)
 
 - **Electronic Schematic**  
-  `![Schematic](./docs/sch.png)`
+  ![Schematic](./docs/sch.png)
 
 - **PCB Layout**  
-  `![PCB Layout](./docs/pcb.png)`
+  ![PCB Layout](./docs/pcb.png)
 
 ---
 
