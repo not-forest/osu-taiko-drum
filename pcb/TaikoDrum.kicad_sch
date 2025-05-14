@@ -4468,7 +4468,7 @@
 	)
 	(wire
 		(pts
-			(xy 118.11 109.22) (xy 118.11 105.41)
+			(xy 118.11 109.22) (xy 118.11 106.68)
 		)
 		(stroke
 			(width 0)
@@ -4575,16 +4575,6 @@
 			(type default)
 		)
 		(uuid "5db07e83-4275-4142-b318-06d73aa846a9")
-	)
-	(wire
-		(pts
-			(xy 72.39 134.62) (xy 73.66 134.62)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "601a0092-630e-4315-bcd8-ecb9028d4010")
 	)
 	(wire
 		(pts
@@ -4735,6 +4725,16 @@
 			(type default)
 		)
 		(uuid "817953b3-1b47-49e3-8ff0-fa2ca7f7fa49")
+	)
+	(wire
+		(pts
+			(xy 72.39 134.62) (xy 73.66 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "856ffbec-a07b-4000-b358-9309508fcaff")
 	)
 	(wire
 		(pts
@@ -5108,6 +5108,16 @@
 	)
 	(wire
 		(pts
+			(xy 118.11 99.06) (xy 118.11 97.79)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "bead8d69-94d3-4beb-9650-5c1c6771cf3b")
+	)
+	(wire
+		(pts
 			(xy 59.69 96.52) (xy 59.69 90.17)
 		)
 		(stroke
@@ -5406,26 +5416,6 @@
 		)
 		(uuid "f52e8c59-a848-426d-a79d-222602c17e75")
 	)
-	(label "D+"
-		(at 121.92 44.45 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "039004cc-c149-4763-af1c-e4c20b2cd01f")
-	)
-	(label "D-"
-		(at 121.92 46.99 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "986728e9-6835-4f48-87d1-4f01c615b6f1")
-	)
 	(global_label "SWDIO"
 		(shape input)
 		(at 175.26 44.45 0)
@@ -5549,6 +5539,28 @@
 		(uuid "46f6c9d8-efff-4a8d-9bfd-4ea9bdba2286")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
 			(at 184.4742 46.99 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+				(hide yes)
+			)
+		)
+	)
+	(global_label "D+"
+		(shape input)
+		(at 73.66 134.62 0)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "5152dc76-cfac-498b-a10d-2f19aeeb46f7")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 79.4876 134.62 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5868,28 +5880,6 @@
 	)
 	(global_label "D-"
 		(shape input)
-		(at 73.66 134.62 0)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "f3950aea-f1c9-4c91-8f2e-4c159e77a1ea")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 79.4876 134.62 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-				(hide yes)
-			)
-		)
-	)
-	(global_label "D+"
-		(shape input)
 		(at 73.66 132.08 0)
 		(fields_autoplaced yes)
 		(effects
@@ -5898,7 +5888,7 @@
 			)
 			(justify left)
 		)
-		(uuid "f90f849e-1f22-487e-b5b1-13b1e22b50ca")
+		(uuid "f3950aea-f1c9-4c91-8f2e-4c159e77a1ea")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
 			(at 79.4876 132.08 0)
 			(effects
@@ -9141,7 +9131,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 118.11 101.6 0)
+		(at 118.11 102.87 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -9149,7 +9139,7 @@
 		(dnp no)
 		(uuid "bc4c6996-b021-4083-b4c5-6db9ccf8bfe3")
 		(property "Reference" "C9"
-			(at 121.92 100.3299 0)
+			(at 121.92 101.5999 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9158,7 +9148,7 @@
 			)
 		)
 		(property "Value" "10µf"
-			(at 121.92 102.8699 0)
+			(at 121.92 104.1399 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9167,7 +9157,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_THT:C_Radial_D5.0mm_H5.0mm_P2.00mm"
-			(at 119.0752 105.41 0)
+			(at 119.0752 106.68 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9176,7 +9166,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 118.11 101.6 0)
+			(at 118.11 102.87 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9185,7 +9175,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 118.11 101.6 0)
+			(at 118.11 102.87 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9841,7 +9831,7 @@
 				)
 			)
 		)
-		(property "Value" "16M"
+		(property "Value" "1M"
 			(at 252.222 45.72 0)
 			(effects
 				(font
