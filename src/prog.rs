@@ -215,7 +215,7 @@ impl ProgrammerSerializer for DrumConfig {
                 /* Two bytes are expected for sharpness configuration. */
                 SHARP => {
                     if buff.get(idx+2).is_some() {
-                        s.parse_cfg.sensitivity = u32::from_be_bytes(buff[idx..idx+2].try_into().unwrap());
+                        s.parse_cfg.sharpness = u16::from_be_bytes(buff[idx..idx+2].try_into().unwrap());
                     } else {
                         log::error!("Desserialization error: Unexpected end of stream within the configuration command.");
                         return Err(0);
