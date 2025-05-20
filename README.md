@@ -10,6 +10,8 @@ The project includes:
 - 3D-printable components for building the physical enclosure
 
 ---
+![Taiko Drum Controller Icon](./docs/drum_icon.png)
+---
 
 ## 📸 Visual Overview
 
