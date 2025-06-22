@@ -8266,7 +8266,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Connector_USB:USB_Mini-B_Wuerth_65100516121_Horizontal"
+		(property "Footprint" "Library:MICRO-USB-SMD_5P-P0.65-H-F_C10418"
 			(at 116.84 45.72 0)
 			(effects
 				(font
