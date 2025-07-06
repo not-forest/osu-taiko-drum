@@ -139,7 +139,7 @@ mod app {
         let cfg = &usb_dev.programmer.cfg;
 
         /* Tasks */ 
-        Parser::spawn(cfg, r).expect("First parser initialization.");
+        Parser::spawn(r).expect("First parser initialization.");
 
         (
             Shared { usb_dev, gpioa: dev.GPIOA, reset_pend: false }, 
@@ -152,16 +152,18 @@ mod app {
     /// Obtained samples are being parsed to detect a proper drum hit and it's location. Based on
     /// the current hits, HID reports are being sent to the host machine, simulating a keyboard
     /// device that presses the corresponding keystrokes.
-    #[task(local = [parser])]
-    async fn Parser(ctx: Parser::Context, cfg: &DrumConfig, mut r: Receiver) {
+    #[task(local = [parser], shared = [usb_dev])]
+    async fn Parser(mut ctx: Parser::Context, mut r: Receiver) {
         let parser = ctx.local.parser;
         log::info!("Parser task spawned. Waiting for samples.");
 
         /* Handling samples obtained from the piezoelectric sensor */
         while let Ok(sample) = r.recv().await {
-            parser.parse(cfg, sample).map(|report|
-                UsbHidSender::spawn(&report).expect("Higher priority task spawn condition.")
-            );
+            ctx.shared.usb_dev.lock(|dev| {
+                parser.parse(&dev.programmer.cfg, sample).map(|report|
+                    UsbHidSender::spawn(report).expect("Higher priority task spawn condition.")
+                );
+            });
 
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
             Systick::delay(1.millis()).await;
@@ -170,11 +172,11 @@ mod app {
 
     /// Sends USB HID reports to the host machine.
     #[task(priority = 1, shared = [usb_dev])]
-    async fn UsbHidSender(mut ctx: UsbHidSender::Context, report: &DrumHitStrokeHidReport) {
+    async fn UsbHidSender(mut ctx: UsbHidSender::Context, report: DrumHitStrokeHidReport) {
         ctx.shared.usb_dev.lock(|dev| {
            
             dev.poll();
-            match dev.hid_keyboard.push_input(report) {
+            match dev.hid_keyboard.push_input(&report) {
                 Ok(report_length) => {
                     log::info!("Bytes send: {}", report_length);
                 },
