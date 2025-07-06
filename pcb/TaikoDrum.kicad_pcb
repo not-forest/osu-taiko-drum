@@ -7903,7 +7903,7 @@
 		)
 	)
 	(gr_text "VCC"
-		(at 118.6 134.2 0)
+		(at 118.8 134.2 0)
 		(layer "B.SilkS")
 		(uuid "09e5784f-9d5f-4d6b-9408-a62e42cdf271")
 		(effects
@@ -7915,7 +7915,7 @@
 		)
 	)
 	(gr_text "SWDIO"
-		(at 118.6 129 0)
+		(at 118.8 131.6 0)
 		(layer "B.SilkS")
 		(uuid "277912cf-4ffe-4a90-944f-7d76c8c2f7f0")
 		(effects
@@ -7927,7 +7927,7 @@
 		)
 	)
 	(gr_text "GND"
-		(at 118.6 126.4 0)
+		(at 118.8 126.4 0)
 		(layer "B.SilkS")
 		(uuid "38950c21-a4e4-4169-9108-18b61b748cd7")
 		(effects
@@ -7939,7 +7939,7 @@
 		)
 	)
 	(gr_text "SWCLK"
-		(at 118.7 131.6 0)
+		(at 118.7 129 0)
 		(layer "B.SilkS")
 		(uuid "75c75c3c-8029-48f8-bf74-384c6bd490b0")
 		(effects
