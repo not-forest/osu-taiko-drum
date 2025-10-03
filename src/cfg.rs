@@ -21,7 +21,7 @@ unsafe extern "C" {
 pub struct DrumConfig {
     pub hit_mapping: HitMapping,
     pub parse_cfg: SignalParsingConfiguration,
-    _reserved: u16,
+    _reserved: u32,
 }
 
 const CFG_START: *const u8 = unsafe { &__cfg_start as *const u8 };
@@ -145,22 +145,25 @@ pub struct HitMapping {
 }
 
 /// Signal processing related configuration.
-#[repr(C, align(4))]
+///
+/// Even piezos from the same batch will provide very different results. Those calibration values
+/// can be handly to calibrate the drum accordingly to inner sensors.
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct SignalParsingConfiguration {
-    /// Additional margin above the dynamic threshold. The lower the value, the some sensitive drum
-    /// will become. Small values would lead to spurious hits from the noise.
-    pub sensitivity: u32,
-    /// Sharpness defines a size of sliding window. It shall not be too small so that proper hits can
-    /// be detected, but not too big, because it will cause a huge input lag.
+    /// Value in percents that define which deviation percentage is actually enough for piezo
+    /// sensor to be count as a proper hit.
+    pub sensitivity: u8,
     pub sharpness: u16, 
+    _reserved: u8,
 }
 
 impl Default for SignalParsingConfiguration {
     fn default() -> Self {
         Self {
-            sensitivity: 100_000u32,
-            sharpness: 32u16,
+            sensitivity: 50u8,
+            sharpness: 600u16,
+            _reserved: 0u8,
         }
     }
 }

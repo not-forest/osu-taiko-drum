@@ -1,25 +1,19 @@
 //! Logical structure that performs complete analysis on the upcoming samples from the
 //! piezoelectric sensors and pushes further information about true and spurious hits.
 
-use core::u32;
-
 use crate::{
     cfg::{DrumConfig, HitMapping}, 
     hid::DrumHitStrokeHidReport, 
     piezo::PiezoSample,
 };
 
-const MID_RANGE: u16 = 4096 / 2;
+const MID_RANGE: i16 = 4096 / 2;
 
 #[derive(Debug)]
 pub struct Parser { 
-    /// Window counter. Will reset after reaching [`SHARPNESS`]
-    window_cnt: u16,
-
-    /// Buffered energy for each individual channel.
-    energies: [u32; 4],
-    /// History of last energy values in previous [`SHARPNESS`] windows with an index value. 
-    histograms: [EnergyHistogram<16>; 4],
+    /// Sliding windows of 512 samples. This value is based on the fact that each piezo signal will
+    /// likely last for around 2-4ms and 20 kHz sampling rate of ADC. Each sensor has it's own window.
+    windows: [SampleWindow<i16, 512>; 4],
     /// Four booleans representing the current state of four hit spots.
     states: [bool; 4],
 
@@ -30,12 +24,9 @@ pub struct Parser {
 impl Default for Parser {
     fn default() -> Self {
         Self {
-            window_cnt: 0,
             state_change: false,
-            energies: [0u32; 4],
             states: [false; 4],
-            // MAX values are used to not spam keystrokes during startup.
-            histograms: [EnergyHistogram::new(u32::MAX); 4],
+            windows: [SampleWindow::new(0i16); 4],
         }
     }
 }
@@ -47,43 +38,32 @@ impl Parser {
         cfg: &DrumConfig, 
         sample: PiezoSample
     ) -> Option<DrumHitStrokeHidReport> {
-        let (sha, sens) = (cfg.parse_cfg.sharpness, cfg.parse_cfg.sensitivity);
+        let (sharp, sens) = (cfg.parse_cfg.sharpness, cfg.parse_cfg.sensitivity);
 
-        self.window_cnt += 1;
-
-        // Energy buffering.
-        self.energies.iter_mut().zip(sample.0)
-            .for_each(|(e, s)|
-                *e = e.saturating_add(
-                    (s as i32).saturating_sub(MID_RANGE as i32)
-                        .pow(2) as u32
-                )
-            );
-
-        if self.window_cnt == sha {
-            // Deducing which sensors was hit based on buffered energy on each individual channel.
-            log::info!("SEPARATOR::::::::::");
-            self.states.iter_mut()
-                .zip(self.energies)
-                .zip(&mut self.histograms)
-                .map(|((a, b), c)| (a, b, c))
-                .for_each(|(s, e, h)| {
-                    let thresh = h.threshold() + sens;
-                    let new_state = e > thresh;
-                    log::info!("ENERGY: {} AND THRESH: {}", e, thresh);
-
-                    if *s != new_state {
-                        *s = new_state;
-                        self.state_change = true;
+        let mut i = 0;
+        self.windows.iter_mut()
+            .zip(sample.0)
+            .zip(&mut self.states)
+            .map(|((a, b), c)| (a, b, c))
+            .for_each(|(w, s, b)| {
+                w.store(s as i16 - MID_RANGE);
+                if w.index_fifo == 0 {
+                    // If deviation is too large, calculating ...
+                    // TODO! Append additional filtering to prevent cross-talk.
+                    if check_deviation(w.threshold(), w.min(), w.max(), sharp, 70) {
+                        if *b != true {
+                            *b = true;
+                            self.state_change = true;
+                        }
+                    } else {
+                        if *b != false {
+                            *b = false;
+                            self.state_change = true;
+                        }
                     }
-                    
-                    h.store(e)
-
-                });
-
-            self.window_cnt = 0;
-            self.energies = [0u32; 4]; 
-        }
+                    i += 1;
+                }
+            });
 
         if self.state_change {
             self.state_change = false;
@@ -109,19 +89,24 @@ impl Parser {
     }
 }
 
-/// Sorted window of last [`N`] energy values.
+/// Time window that holds N samples with helper methods.
+///
+/// Accumulates oncoming samples from one piezo sensor with additional sorting for obtaining the
+/// median value in the whole window. This median value is used as an adaptive noise threshold,
+/// which detects when piezoelectric sensor is being hit (or spurious hit).
 #[derive(Debug, Clone, Copy)]
-struct EnergyHistogram<const N: usize> {
+struct SampleWindow<T: Ord + Copy, const N: usize> {
     /// This window is guaranteed to be always sorted.
-    sorted: [u32; N],
-    /// FIFO buffer of N last values.
-    fifo: [u32; N],
+    sorted: [T; N],
+    /// FIFO buffer of N last samples.
+    fifo: [T; N],
     index_fifo: usize,
 }
 
-impl<const N: usize> EnergyHistogram<N> {
+impl<T: Ord + Copy, const N: usize> SampleWindow<T, N> {
     /// Creates a new instance of [] with initial sorted window filled with copied argument value.
-    fn new(filler: u32) -> Self {
+    fn new(filler: T) -> Self {
+        debug_assert!(N.is_power_of_two(), "Current implementation only works for power of two N.");
         Self {
             sorted: [filler; N],
             fifo: [filler; N],
@@ -129,18 +114,15 @@ impl<const N: usize> EnergyHistogram<N> {
         }
     }
 
-    /// Stores new value into a sorted array, while also remembers it's index position.
-    fn store(&mut self, new: u32) {
+    /// Stores new value into a sorted array
+    fn store(&mut self, new: T) {
         let old = self.fifo[self.index_fifo];
 
-        // Remove old value from `sorted` by finding it and shifting the rest.
+        // Remove old value from `sorted` by finding it and shifting the rest. Ignore if not exists already
         if let Ok(i) = self.sorted.binary_search(&old) {
             if i < N - 1 {
                 self.sorted[i..].rotate_left(1);
             }
-        } else {
-            // This should never happen if both `fifo` and `sorted` are kept in sync.
-            debug_assert!(false, "Old value not found in sorted array");
         }
 
         match self.sorted.binary_search(&new) {
@@ -155,13 +137,36 @@ impl<const N: usize> EnergyHistogram<N> {
         }
 
         self.fifo[self.index_fifo] = new;
-        self.index_fifo = (self.index_fifo + 1) & (N - 1);
+        self.index_fifo = (self.index_fifo + 1) & (N - 1);  // This is only fine if N is a power of two.
 
         debug_assert!(self.sorted.is_sorted(), "Sorted array must stay sorted during the whole life of a program.");
     }
 
-    /// Threshold is equal to median of last N values.
-    fn threshold(&self) -> u32 {
+    /// Returns the minimal value in the whole window.
+    fn min(&self) -> T {
+        self.sorted[0]
+    }
+
+    /// Returns the maximal value in the whole window.
+    fn max(&self) -> T {
+        self.sorted[N - 1]
+    }
+
+    /// Adaptive threshold is being calculated as a median value of N samples. Sorted array allows
+    /// to find it at O(0).
+    fn threshold(&self) -> T {
         self.sorted[N / 2]
     }
+}
+
+fn relative_deviation(median: i16, value: i16, scale: u16) -> f32 {
+    ( (value - median).abs() as f32 ) / scale as f32
+}
+
+fn check_deviation(median: i16, min_val: i16, max_val: i16, scale: u16, percent: u8) -> bool {
+    let max_dev = relative_deviation(median, max_val, scale);
+    let min_dev = relative_deviation(median, min_val, scale);
+
+    let pc = percent as f32 / 100f32;
+    max_dev > pc || min_dev > pc
 }

@@ -163,7 +163,7 @@ impl ProgrammerSerializer for DrumConfig {
     fn serialize(&self, buff: &mut [u8; BUFF_LEN]) {
         let hm = self.hit_mapping;
         let pc = self.parse_cfg;
-        let s = pc.sensitivity.to_be_bytes();
+        let s = pc.sensitivity;
         let sh = pc.sharpness.to_be_bytes();
 
         // Values scanned by utility are expected in big-endian format.
@@ -172,7 +172,7 @@ impl ProgrammerSerializer for DrumConfig {
             RIGHTDON,   hm.right_don as u8,
             LEFTDON,    hm.left_don as u8,
             RIGHTKAT,   hm.right_kat as u8,
-            SENS,       s[0], s[1], s[2], s[3],
+            SENS,       s,
             SHARP,      sh[0], sh[1],
         ];
 
@@ -205,7 +205,7 @@ impl ProgrammerSerializer for DrumConfig {
                 /* Four bytes is expected for sensitivity configuration. */
                 SENS => {
                     if buff.get(idx+4).is_some() {
-                        s.parse_cfg.sensitivity = u32::from_be_bytes(buff[idx..idx+4].try_into().unwrap());
+                        s.parse_cfg.sensitivity = buff[idx].try_into().unwrap();
                     } else {
                         log::error!("Desserialization error: Unexpected end of stream within the configuration command.");
                         return Err(0);
