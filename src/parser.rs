@@ -5,26 +5,24 @@ use crate::{
     cfg::{DrumConfig, HitMapping}, 
     hid::DrumHitStrokeHidReport, 
     piezo::PiezoSample,
+    cross_correlation::xcorr,
 };
 
 const MID_RANGE: i16 = 4096 / 2;
+const WINDOW_SIZE: usize = 512;
 
 #[derive(Debug)]
 pub struct Parser { 
-    /// Sliding windows of 512 samples. This value is based on the fact that each piezo signal will
-    /// likely last for around 2-4ms and 20 kHz sampling rate of ADC. Each sensor has it's own window.
-    windows: [SampleWindow<i16, 512>; 4],
+    /// Sliding windows of samples. It's length is based on the fact that each piezo signal will
+    /// likely last for around 1-2ms and 20 kHz sampling rate of ADC. Each sensor has it's own window.
+    windows: [SampleWindow<i16, WINDOW_SIZE>; 4],
     /// Four booleans representing the current state of four hit spots.
     states: [bool; 4],
-
-    /// Becomes true when the state of at least one sensor is changed.
-    state_change: bool,
 }
 
 impl Default for Parser {
     fn default() -> Self {
         Self {
-            state_change: false,
             states: [false; 4],
             windows: [SampleWindow::new(0i16); 4],
         }
@@ -39,8 +37,8 @@ impl Parser {
         sample: PiezoSample
     ) -> Option<DrumHitStrokeHidReport> {
         let (sharp, sens) = (cfg.parse_cfg.sharpness, cfg.parse_cfg.sensitivity);
+        let (mut state_change, mut second_stage) = (false, false);
 
-        let mut i = 0;
         self.windows.iter_mut()
             .zip(sample.0)
             .zip(&mut self.states)
@@ -48,25 +46,47 @@ impl Parser {
             .for_each(|(w, s, b)| {
                 w.store(s as i16 - MID_RANGE);
                 if w.index_fifo == 0 {
-                    // If deviation is too large, calculating ...
-                    // TODO! Append additional filtering to prevent cross-talk.
-                    if check_deviation(w.threshold(), w.min(), w.max(), sharp, 70) {
+                    // If deviation is too large, calculating performing second stage signal processing.
+                    if check_deviation(w.threshold(), w.min(), w.max(), sharp, sens) {
                         if *b != true {
                             *b = true;
-                            self.state_change = true;
+                            second_stage = true;
+                            state_change = true;
                         }
                     } else {
-                        if *b != false {
-                            *b = false;
-                            self.state_change = true;
-                        }
+                        *b = false;
+                        state_change = true;
                     }
-                    i += 1;
                 }
             });
 
-        if self.state_change {
-            self.state_change = false;
+        // Pairwise cross-correlation. Delayed hit is more likely to be sensor cross-talk
+        if second_stage {
+            for i in 0..4 {
+                if !self.states[i] { continue }
+                let reference = &self.windows[i];
+                for j in (i + 1)..4 {
+                    if !self.states[j] { continue }
+                    let occurance = &self.windows[j];
+                    let delay = xcorr(
+                        &occurance.fifo, 
+                        occurance.threshold(), 
+                        &reference.fifo, 
+                        reference.threshold()
+                    );
+
+                    log::info!("piezo{} ~ piezo{} = {}", i, j, delay);
+
+                    if delay > 5 {  // This is not nice -_-
+                        self.states[j] = false;
+                    } else if delay < -5 {
+                        self.states[i] = false;
+                    }
+                }
+            }
+        }
+
+        if state_change {
             return Some(self.current(cfg.hit_mapping));
         }
 
@@ -115,6 +135,7 @@ impl<T: Ord + Copy, const N: usize> SampleWindow<T, N> {
     }
 
     /// Stores new value into a sorted array
+    // TODO! FIND BUG HERE, SOMETHING IS FISHY. 
     fn store(&mut self, new: T) {
         let old = self.fifo[self.index_fifo];
 

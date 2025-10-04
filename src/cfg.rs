@@ -161,8 +161,8 @@ pub struct SignalParsingConfiguration {
 impl Default for SignalParsingConfiguration {
     fn default() -> Self {
         Self {
-            sensitivity: 50u8,
-            sharpness: 600u16,
+            sensitivity: 70u8,
+            sharpness: 1000u16,
             _reserved: 0u8,
         }
     }
