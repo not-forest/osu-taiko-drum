@@ -13,6 +13,7 @@ stm32f1 = { version = "0.15.1", features = ["stm32f103"] }
 lhash = { version = "1.1.0", features = ["md5"] }
 num-complex = { version = "0.3", default-features = false }
 fixed-fft = "0.1"
+heapless = "0.9.1"
 
 log = "0.4"
 panic-custom = "0.1.1"
@@ -31,7 +32,7 @@ test = false
 bench = false
 
 [profile.release]
-opt-level = 4
+opt-level = 3
 debug-assertions = false
 overflow-checks = false
 panic = 'abort'

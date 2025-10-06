@@ -19,6 +19,8 @@ mod hid;
 mod cfg;
 /// Runtime programmer.
 mod prog;
+/// Cross-correlation signal processing.
+mod cross_correlation;
 
 #[rtic::app(
     device = stm32f1::stm32f103,
@@ -128,7 +130,8 @@ mod app {
         // Runtime firmware and configuration programmer.
         let programmer = Programmer::new(
             alloc,
-            DrumConfig::new(&mut dev.FLASH),
+            //DrumConfig::new(&mut dev.FLASH),
+            DrumConfig::default(),
             dev.FLASH,
         );
 
@@ -166,7 +169,7 @@ mod app {
             });
 
             super::int_enable!(ADC1_2); // TODO! do not enable on each loop.
-            Systick::delay(1.millis()).await;
+            Systick::delay(500.nanos()).await;
         }
     }
 
@@ -178,7 +181,7 @@ mod app {
             dev.poll();
             match dev.hid_keyboard.push_input(&report) {
                 Ok(report_length) => {
-                    log::info!("Bytes send: {}", report_length);
+                    log::debug!("Bytes send: {}", report_length);
                 },
                 Err(usb_err) => match usb_err {
                     // Checking if device is properly initialized at that point.

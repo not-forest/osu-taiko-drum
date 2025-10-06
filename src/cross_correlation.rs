@@ -10,12 +10,12 @@ use num_complex::Complex;
 /// Similar signals will cause cross-correlation output to provide bigger numeric values, where the
 /// biggest one shall correspond to the time delay between one signal and another.
 pub fn xcorr(
-    signal: &[i16; 512],
+    signal: &[i16; 256],
     signal_median: i16,
-    reference: &[i16; 512],
+    reference: &[i16; 256],
     reference_median: i16,
 ) -> isize {
-    const N: usize = 512;
+    const N: usize = 256;
     let mut buf_signal = [Complex { re: 0, im: 0 }; N];
     let mut buf_reference = [Complex { re: 0, im: 0 }; N];
 

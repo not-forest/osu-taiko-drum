@@ -7,9 +7,10 @@ use crate::{
     piezo::PiezoSample,
     cross_correlation::xcorr,
 };
+use heapless::Vec;
 
 const MID_RANGE: i16 = 4096 / 2;
-const WINDOW_SIZE: usize = 512;
+const WINDOW_SIZE: usize = 256;
 
 #[derive(Debug)]
 pub struct Parser { 
@@ -24,13 +25,13 @@ impl Default for Parser {
     fn default() -> Self {
         Self {
             states: [false; 4],
-            windows: [SampleWindow::new(0i16); 4],
+            windows: core::array::from_fn(|_| SampleWindow::new(0i16)),
         }
     }
 }
 
 impl Parser {
-    /// Parses upcoming samples and returns a boolean according to the curreent change of state.
+    /// Parses upcoming samples and returns a boolean according to the current change of state.
     pub(crate) fn parse(
         &mut self, 
         cfg: &DrumConfig, 
@@ -77,10 +78,9 @@ impl Parser {
 
                     log::info!("piezo{} ~ piezo{} = {}", i, j, delay);
 
-                    if delay > 5 {  // This is not nice -_-
-                        self.states[j] = false;
-                    } else if delay < -5 {
-                        self.states[i] = false;
+                    match delay {
+                        ..0 => self.states[i] = false,
+                        0.. => self.states[j] = false,
                     }
                 }
             }
@@ -114,69 +114,64 @@ impl Parser {
 /// Accumulates oncoming samples from one piezo sensor with additional sorting for obtaining the
 /// median value in the whole window. This median value is used as an adaptive noise threshold,
 /// which detects when piezoelectric sensor is being hit (or spurious hit).
-#[derive(Debug, Clone, Copy)]
-struct SampleWindow<T: Ord + Copy, const N: usize> {
+#[derive(Debug)]
+struct SampleWindow<T: Ord + Copy + core::fmt::Debug, const N: usize> {
     /// This window is guaranteed to be always sorted.
-    sorted: [T; N],
+    sorted: Vec<T, N>,
     /// FIFO buffer of N last samples.
     fifo: [T; N],
     index_fifo: usize,
 }
 
-impl<T: Ord + Copy, const N: usize> SampleWindow<T, N> {
-    /// Creates a new instance of [] with initial sorted window filled with copied argument value.
+impl<T: Ord + Copy + core::fmt::Debug, const N: usize> SampleWindow<T, N> {
+    /// Creates a new instance of [`SampleWindow`] with initial sorted window filled with copied argument value.
     fn new(filler: T) -> Self {
         debug_assert!(N.is_power_of_two(), "Current implementation only works for power of two N.");
         Self {
-            sorted: [filler; N],
+            sorted: Vec::from_array([filler; N]),
             fifo: [filler; N],
             index_fifo: 0,
         }
     }
 
-    /// Stores new value into a sorted array
-    // TODO! FIND BUG HERE, SOMETHING IS FISHY. 
+    /// Stores new value into a both fifo array sorted vector.
     fn store(&mut self, new: T) {
         let old = self.fifo[self.index_fifo];
 
-        // Remove old value from `sorted` by finding it and shifting the rest. Ignore if not exists already
+        // Removes old element from the array.
         if let Ok(i) = self.sorted.binary_search(&old) {
-            if i < N - 1 {
-                self.sorted[i..].rotate_left(1);
-            }
+            self.sorted.remove(i); 
+        } else {
+            panic!("Implementation error. Both fifo array and sorted vector must be synchronized.");
         }
 
-        match self.sorted.binary_search(&new) {
-            Ok(i) | Err(i) => {
-                if i < N - 1 {
-                    self.sorted[i..N - 1].rotate_right(1);
-                    self.sorted[i] = new;
-                } else {
-                    self.sorted[N-1] = new;
-                }
-            }
-        }
+        // Inserts new one. Both operation shall proceed to not overflow the vector.
+        let (Ok(i) | Err(i)) = self.sorted.binary_search(&new);
+        self.sorted.insert(i, new)
+            .expect("Implementation error. Vector shall always have place for one more element at that point.");
 
         self.fifo[self.index_fifo] = new;
-        self.index_fifo = (self.index_fifo + 1) & (N - 1);  // This is only fine if N is a power of two.
+        self.index_fifo = (self.index_fifo + 1) & (N - 1);  // This is only fine if N is a power of two. 
 
-        debug_assert!(self.sorted.is_sorted(), "Sorted array must stay sorted during the whole life of a program.");
+        assert!(self.sorted.is_sorted(), "Implementation error. Unsorted sorted vector.");
     }
 
     /// Returns the minimal value in the whole window.
     fn min(&self) -> T {
-        self.sorted[0]
+        *self.sorted.first()
+            .expect("Shall never be empty at the point where deviation is calculated.")
     }
 
     /// Returns the maximal value in the whole window.
     fn max(&self) -> T {
-        self.sorted[N - 1]
+        *self.sorted.last()
+            .expect("Shall never be empty at the point where deviation is calculated.")
     }
 
-    /// Adaptive threshold is being calculated as a median value of N samples. Sorted array allows
-    /// to find it at O(0).
+    /// Adaptive threshold is being calculated as a median value of N samples.
     fn threshold(&self) -> T {
-        self.sorted[N / 2]
+        *self.sorted.get(N / 2)
+            .expect("Shall never be empty at the point where deviation is calculated.")
     }
 }
 
