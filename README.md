@@ -1,19 +1,21 @@
 # 🥁 Osu! Taiko Drum Controller
 
-A cross-platform, DIY Taiko drum controller designed for playing [osu!taiko](https://osu.ppy.sh/home) on PC. This controller functions as a fully configurable keypad that detects vibration-based hits and maps them to keypress events, serving as a general-purpose input device.
+A cross-platform, DIY **Taiko drum controller** designed for playing **[osu!taiko](https://osu.ppy.sh/home)** on PC. This controller functions as a fully configurable keypad that detects vibration-based hits and maps them to keypress events, serving as a general-purpose input device.
 
 The project includes:
 
 - Hardware schematics and PCB layout  
-- Firmware written in Rust  
-- A command-line utility written in Tcl for configuration and interaction  
+- Firmware written in Rust using RTIC framework
+- GUI interface for configuring the drum from the host side (TODO!)
+- Jupyter notebook for simulating piezoelectric sensor signals and modeling post-processing, which is then rewritten within the firmware in no_std environment
+- A command-line utility for configuring the drum from the host side.  
 - 3D-printable components for building the physical enclosure
 
 ---
 ![Taiko Drum Controller Icon](./docs/drum_icon.png)
 ---
 
-## 📸 Visual Overview
+## Visual Overview
 
 - **Assembled Physical Drum Controller**  
   ![Assembled Physical Representation](./docs/drum-image-made.png)
@@ -26,7 +28,7 @@ The project includes:
 
 ---
 
-### 📦 Project Overview
+### Project Overview
 
 ---
 
@@ -34,9 +36,7 @@ The project includes:
 
 The firmware is written in Rust using the [RTIC framework](https://rtic.rs/), simulating a general-purpose HID device to ensure compatibility across all major operating systems. It simultaneously exposes a serial interface for configuration and control via utility software.
 
-Each of the four piezoelectric sensors is sampled independently using dedicated ADC channels. The firmware uses dual ADC injected simultaneous mode to capture both "Don" and "Kat" hits in pairs with minimal latency. Captured samples are fed into a queue and processed by a parser task that calculates signal energy using a sliding window algorithm with a width, configurable from the utility software (sharpness).
-
-Hit detection is based on peak energy values per window, compared against adaptive thresholds updated in real time. Multiple comparison and filtering techniques are applied to suppress false positives from sensor crosstalk. Valid hits are mapped into keypresses and transmitted as USB HID reports.
+Each of the four piezoelectric sensors is sampled independently using dedicated ADC channels. The firmware captures both "Don" and "Kat" hits in pairs with minimal latency. Captured samples are fed into a queue and processed by a parser task that performs post-processing to detect real and spurious hits. Inner constants like `sensitivity` and `sharpness` are configurable from the utility software. Valid hits are mapped into keypresses and transmitted as USB HID reports.
 
 All configuration data is stored in the last page of the flash memory and can be updated at runtime using the configuration utility.
 
@@ -48,14 +48,14 @@ The custom PCB is designed in KiCad and features core components typically found
 
 ---
 
-## Configuration Utility
+## Configuration Utility (TODO! swap to GUI utility)
 
-A lightweight command-line utility written in Tcl is provided for runtime configuration. It allows you to:
+A lightweight command-line utility written in Tcl is provided for runtime configuration. It allows to:
 
-- Remap keypresses for each sensor
-- Adjust hit sensitivity and window size ("sharpness")
-- Send control commands, such as firmware reboot  
-- *(Firmware update support coming soon)*
+- Remap keypresses for each sensor. Can be changed to any proper keyboard key.
+- Adjust hit detection `sensitivity` and `sharpness` to fine tune inner hit detection algorithm
+- Send control commands, such as firmware reboot.
+- Firmware update support (TODO!)
 
 ---
 
@@ -65,5 +65,3 @@ All necessary 3D-printable components are located in the `3d/` directory. This i
 
 - Raw Blender model files
 - Cura-ready imported `.3mf` files
-
-
